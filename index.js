@@ -1,15 +1,13 @@
- GatewayIntentBits,
-  Events
-} = require("discord.js");
+require("dotenv").config();
+
+const { Client, GatewayIntentBits, Events } = require("discord.js");
 
 if (!process.env.DISCORD_TOKEN) {
   throw new Error("DISCORD_TOKEN is missing!");
 }
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
 
 client.once(Events.ClientReady, (readyClient) => {
