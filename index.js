@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const db = require("./database");
+console.log("🦉 DATABASE IMPORT SUCCESSFUL");
 
 const { Client, GatewayIntentBits, Events } = require("discord.js");
 
