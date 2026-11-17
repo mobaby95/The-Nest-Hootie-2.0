@@ -40,8 +40,9 @@ const commands = [
         .addStringOption(option =>
           option
             .setName("zone")
-            .setDescription("Example: America/Los_Angeles")
+            .setDescription("Search for your city or time zone")
             .setRequired(true)
+            .setAutocomplete(true)
         )
     )
     .addSubcommand(subcommand =>
