@@ -1,5 +1,7 @@
 require("dotenv").config();
 
+const db = require("./database");
+
 const { Client, GatewayIntentBits, Events } = require("discord.js");
 
 if (!process.env.DISCORD_TOKEN) {
