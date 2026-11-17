@@ -57,6 +57,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
+    if (interaction.commandName === "checkin") {
+  const response = interaction.options.getString("response");
+  const visibility = interaction.options.getString("visibility");
+
+  await interaction.reply({
+    content:
+      `🪺 **NEST CHECK-IN**\n\n` +
+      `Thank you for checking in, ${interaction.user.username}! 🖤\n\n` +
+      `**Your response:** ${response}\n\n` +
+      `Your check-in has been received!`,
+    ephemeral: visibility === "private"
+  });
+}
+    
   } catch (error) {
     console.error("Command response error:", error);
   }
