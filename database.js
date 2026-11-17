@@ -80,6 +80,11 @@ db.exec(`
     longest_streak INTEGER DEFAULT 0,
     last_checkin_date TEXT
   );
+  CREATE TABLE IF NOT EXISTS user_timezones (
+    user_id TEXT PRIMARY KEY,
+    timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 console.log("🖤 HOOTIE DATABASE CONNECTED");
