@@ -41,6 +41,27 @@ async function registerCommands() {
   }
 }
 
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  try {
+    if (interaction.commandName === "nest") {
+      await interaction.reply({
+        content: "🖤 Welcome to The Nest! Where the night owls thrive. 🦉"
+      });
+    }
+
+    if (interaction.commandName === "ping") {
+      await interaction.reply({
+        content: "🦉 Hootie is awake! All systems are looking good. 🖤"
+      });
+    }
+
+  } catch (error) {
+    console.error("Command response error:", error);
+  }
+});
+
 client.once(Events.ClientReady, async (readyClient) => {
   console.log("🖤 HOOTIE 2.0 IS ONLINE");
   console.log("Logged in as " + readyClient.user.tag);
