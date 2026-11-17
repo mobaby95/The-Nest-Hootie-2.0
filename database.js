@@ -64,14 +64,16 @@ db.exec(`
     jailed_at TEXT NOT NULL,
     release_at TEXT NOT NULL
   );
+
   CREATE TABLE IF NOT EXISTS wellness_checkins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
     response TEXT NOT NULL,
     visibility TEXT NOT NULL,
     checkin_date TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, checkin_date)
+    timezone_used TEXT,
+    reward_earned INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS wellness_streaks (
@@ -80,11 +82,74 @@ db.exec(`
     longest_streak INTEGER DEFAULT 0,
     last_checkin_date TEXT
   );
+
   CREATE TABLE IF NOT EXISTS user_timezones (
     user_id TEXT PRIMARY KEY,
     timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles',
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+`);
+
+// Safely migrate older check-in tables
+// This removes the restriction of one check-in per day.
+const checkinsSchema = db.prepare(`
+  SELECT sql
+  FROM sqlite_master
+  WHERE type = 'table'
+    AND name = 'wellness_checkins'
+`).get();
+
+if (
+  checkinsSchema &&
+  checkinsSchema.sql.replace(/\s+/g, "").toUpperCase()
+    .includes("UNIQUE(USER_ID,CHECKIN_DATE)")
+) {
+  const migrateCheckins = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE wellness_checkins_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        response TEXT NOT NULL,
+        visibility TEXT NOT NULL,
+        checkin_date TEXT NOT NULL,
+        timezone_used TEXT,
+        reward_earned INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT INTO wellness_checkins_new (
+        id,
+        user_id,
+        response,
+        visibility,
+        checkin_date,
+        created_at
+      )
+      SELECT
+        id,
+        user_id,
+        response,
+        visibility,
+        checkin_date,
+        created_at
+      FROM wellness_checkins;
+
+      DROP TABLE wellness_checkins;
+
+      ALTER TABLE wellness_checkins_new
+      RENAME TO wellness_checkins;
+    `);
+  });
+
+  migrateCheckins();
+}
+
+// Prevent more than one rewarded check-in per member per local day
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS
+  idx_wellness_daily_reward
+  ON wellness_checkins(user_id, checkin_date)
+  WHERE reward_earned = 1;
 `);
 
 console.log("🖤 HOOTIE DATABASE CONNECTED");
