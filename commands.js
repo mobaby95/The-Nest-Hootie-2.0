@@ -1,3 +1,7 @@
+const { SlashCommandBuilder } = require("discord.js");
+
+const commands = [
+    
 new SlashCommandBuilder()
     .setName("nest")
     .setDescription("Welcome to The Nest 🖤"),
