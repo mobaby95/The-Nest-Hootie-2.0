@@ -8,7 +8,8 @@ const {
   GatewayIntentBits,
   Events,
   REST,
-  Routes
+  Routes,
+  EmbedBuilder
 } = require("discord.js");
 
 if (!process.env.DISCORD_TOKEN) {
@@ -25,6 +26,26 @@ const client = new Client({
 
 const rest = new REST({ version: "10" })
   .setToken(process.env.DISCORD_TOKEN);
+
+// HOOTIE'S CUTE GOTHIC COLOR PALETTE
+const COLORS = {
+  burgundy: 0x702D46,
+  crimson: 0xA34465,
+  charcoal: 0x29232B,
+  silver: 0xB9AEB6
+};
+
+// Create matching Hootie embeds
+function createEmbed(title, description, color = COLORS.burgundy) {
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(description)
+    .setFooter({
+      text: "🦉 Hootie 2.0 • Where the night owls thrive."
+    })
+    .setTimestamp();
+}
 
 // Searchable time-zone list
 const timezones = [
@@ -79,7 +100,7 @@ function getLocalDate(timezone) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
-// Calculate the previous calendar date
+// Calculate previous calendar date
 function getPreviousDate(dateString) {
   const [year, month, day] = dateString.split("-").map(Number);
 
@@ -134,7 +155,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.respond(filtered);
       } catch (error) {
         console.error("Time zone autocomplete error:", error);
-
         await interaction.respond([]).catch(console.error);
       }
     }
@@ -146,31 +166,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   try {
 
-    // WELCOME COMMAND
+    // HAUNTED NEST WELCOME
     if (interaction.commandName === "nest") {
-      await interaction.reply({
-        content: "🖤 Welcome to The Nest! Where the night owls thrive. 🦉"
-      });
+      const embed = createEmbed(
+        "🏚️ WELCOME TO THE HAUNTED NEST",
+        `Well, well... look who wandered into the woods. 👻\n\n` +
+        `Welcome to **The Nest**, night owl!\n\n` +
+        `🦇 Find your people.\n` +
+        `🕯️ Take care of yourself.\n` +
+        `🖤 Collect your rewards.\n` +
+        `🌙 Make yourself at home.\n\n` +
+        `Don't worry. The ghosts are friendly. Probably.`
+      );
 
+      await interaction.reply({ embeds: [embed] });
       return;
     }
 
-    // PING COMMAND
+    // HOOTIE STATUS
     if (interaction.commandName === "ping") {
-      await interaction.reply({
-        content: "🦉 Hootie is awake! All systems are looking good. 🖤"
-      });
+      const embed = createEmbed(
+        "👻 IS HOOTIE AWAKE?",
+        `**BOO!** 🦉\n\n` +
+        `Hootie is wide awake and watching over The Nest.\n\n` +
+        `🖤 Systems: Operational\n` +
+        `🌙 Database: Connected\n` +
+        `🦇 Spooky levels: Maximum\n\n` +
+        `All is quiet in the haunted woods... for now.`,
+        COLORS.crimson
+      );
 
+      await interaction.reply({ embeds: [embed] });
       return;
     }
 
-    // WELLNESS CHECK-IN
+    // MIDNIGHT CONFESSIONS
     if (interaction.commandName === "checkin") {
       const response = interaction.options.getString("response");
       const visibility = interaction.options.getString("visibility");
       const userId = interaction.user.id;
 
-      // Get the member's saved time zone
       const savedTimezone = db.prepare(`
         SELECT timezone
         FROM user_timezones
@@ -181,20 +216,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ? savedTimezone.timezone
         : "America/Los_Angeles";
 
-      // Determine the member's local date
       const today = getLocalDate(timezone);
       const yesterday = getPreviousDate(today);
 
-      // Save the check-in and award points safely
       const processCheckin = db.transaction(() => {
 
-        // Make sure the user has a wellness account
         db.prepare(`
           INSERT OR IGNORE INTO users (user_id)
           VALUES (?)
         `).run(userId);
 
-        // Has this member already earned today's reward?
         const existingReward = db.prepare(`
           SELECT id
           FROM wellness_checkins
@@ -205,7 +236,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const earnedReward = !existingReward;
 
-        // Save every check-in, even if no reward is earned
         db.prepare(`
           INSERT INTO wellness_checkins (
             user_id,
@@ -225,7 +255,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           earnedReward ? 1 : 0
         );
 
-        // Get the member's current streak
         let streak = db.prepare(`
           SELECT current_streak, longest_streak, last_checkin_date
           FROM wellness_streaks
@@ -240,7 +269,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ? streak.longest_streak
           : 0;
 
-        // Only update points and streak on the first daily check-in
         if (earnedReward) {
 
           if (!streak || !streak.last_checkin_date) {
@@ -258,7 +286,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             longestStreak
           );
 
-          // Add 10 Wellness Points
           db.prepare(`
             UPDATE users
             SET
@@ -267,7 +294,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             WHERE user_id = ?
           `).run(userId);
 
-          // Save the updated streak
           db.prepare(`
             INSERT INTO wellness_streaks (
               user_id,
@@ -295,38 +321,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
         };
       }).immediate();
 
-      // Build the Discord response
-      let message =
-        `🪺 **NEST CHECK-IN**\n\n` +
-        `Thank you for checking in, ${interaction.user.username}! 🖤\n\n` +
-        `**Your response:** ${response}\n\n`;
+      let description =
+        `A little birdie told me you stopped by. 🦉\n\n` +
+        `**Your confession:**\n` +
+        `> ${response.replace(/\n/g, "\n> ")}\n\n`;
 
       if (processCheckin.earnedReward) {
-        message +=
-          `🌟 **+10 Wellness Points!**\n` +
-          `🔥 Current streak: **${processCheckin.currentStreak} days**\n\n` +
-          `Your daily reward has been added!`;
+        description +=
+          `🩸 **+10 Wellness Points!**\n` +
+          `🔥 Streak: **${processCheckin.currentStreak} days**\n\n` +
+          `Your daily reward has been tucked safely away in The Nest.`;
       } else {
-        message +=
+        description +=
           `🖤 Your check-in has been saved!\n` +
-          `You've already earned today's Wellness Points.\n` +
-          `🔥 Current streak: **${processCheckin.currentStreak} days**`;
+          `You've already claimed today's reward.\n` +
+          `🔥 Streak: **${processCheckin.currentStreak} days**`;
       }
 
+      const embed = createEmbed(
+        "🕯️ MIDNIGHT CONFESSIONS",
+        description,
+        COLORS.crimson
+      );
+
       await interaction.reply({
-        content: message,
+        embeds: [embed],
         ephemeral: visibility === "private"
       });
 
       return;
     }
 
-    // TIME ZONE COMMAND
+    // YOUR MIDNIGHT CLOCK
     if (interaction.commandName === "timezone") {
       const subcommand = interaction.options.getSubcommand();
       const userId = interaction.user.id;
 
-      // SET TIME ZONE
       if (subcommand === "set") {
         const timezone = interaction.options.getString("zone");
 
@@ -335,8 +365,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
             timeZone: timezone
           });
         } catch (error) {
+          const embed = createEmbed(
+            "🌙 LOST IN THE TIME FOG",
+            "That time zone doesn't look familiar. Please select one from Hootie's suggestions.",
+            COLORS.crimson
+          );
+
           await interaction.reply({
-            content: "❌ Invalid time zone. Please select a valid suggestion.",
+            embeds: [embed],
             ephemeral: true
           });
 
@@ -352,15 +388,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
             updated_at = CURRENT_TIMESTAMP
         `).run(userId, timezone);
 
+        const embed = createEmbed(
+          "🕰️ YOUR MIDNIGHT CLOCK",
+          `Your time zone has been tucked safely into Hootie's archives.\n\n` +
+          `🌙 **Saved time zone:** ${timezone}\n\n` +
+          `Your daily rewards and streaks will follow your local calendar.`,
+          COLORS.crimson
+        );
+
         await interaction.reply({
-          content: `🕒 Your time zone has been saved as **${timezone}**! 🖤`,
+          embeds: [embed],
           ephemeral: true
         });
 
         return;
       }
 
-      // VIEW TIME ZONE
       if (subcommand === "view") {
         const savedTimezone = db.prepare(`
           SELECT timezone
@@ -372,8 +415,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ? savedTimezone.timezone
           : "America/Los_Angeles (default)";
 
+        const embed = createEmbed(
+          "🌙 YOUR MIDNIGHT CLOCK",
+          `Hootie checked the archives!\n\n` +
+          `🕰️ **Your current time zone:**\n${timezone}\n\n` +
+          `Use \`/timezone set\` to change it whenever you like.`,
+          COLORS.burgundy
+        );
+
         await interaction.reply({
-          content: `🕒 Your current time zone is **${timezone}**.`,
+          embeds: [embed],
           ephemeral: true
         });
 
@@ -389,8 +440,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       !interaction.replied &&
       !interaction.deferred
     ) {
+      const embed = createEmbed(
+        "👻 A LITTLE SPOOKY GLITCH",
+        "Hootie stumbled over a cobweb. Something went wrong while processing your command.\n\nPlease try again in a moment. 🖤",
+        COLORS.crimson
+      );
+
       await interaction.reply({
-        content: "Something went wrong while Hootie was processing that command. 🖤",
+        embeds: [embed],
         ephemeral: true
       }).catch(console.error);
     }
