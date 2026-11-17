@@ -28,6 +28,26 @@ const commands = [
           { name: "Public", value: "public" },
           { name: "Private", value: "private" }
         )
+    ),
+
+  new SlashCommandBuilder()
+    .setName("timezone")
+    .setDescription("Manage your personal time zone 🕒")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("set")
+        .setDescription("Set your personal time zone")
+        .addStringOption(option =>
+          option
+            .setName("zone")
+            .setDescription("Example: America/Los_Angeles")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("view")
+        .setDescription("View your saved time zone")
     )
 ];
 
