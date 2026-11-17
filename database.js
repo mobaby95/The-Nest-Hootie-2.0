@@ -64,6 +64,22 @@ db.exec(`
     jailed_at TEXT NOT NULL,
     release_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS wellness_checkins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    response TEXT NOT NULL,
+    visibility TEXT NOT NULL,
+    checkin_date TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, checkin_date)
+  );
+
+  CREATE TABLE IF NOT EXISTS wellness_streaks (
+    user_id TEXT PRIMARY KEY,
+    current_streak INTEGER DEFAULT 0,
+    longest_streak INTEGER DEFAULT 0,
+    last_checkin_date TEXT
+  );
 `);
 
 console.log("🖤 HOOTIE DATABASE CONNECTED");
