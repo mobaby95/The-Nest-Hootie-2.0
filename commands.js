@@ -1,28 +1,28 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
 
 const commands = [
-  // THE NEST
   new SlashCommandBuilder()
     .setName("nest")
-    .setDescription("Welcome to The Nest 🖤"),
+    .setDescription("Welcome to The Nest"),
 
   new SlashCommandBuilder()
     .setName("ping")
-    .setDescription("Check if Hootie is awake 🦉"),
+    .setDescription("Check if Hootie is awake"),
 
-  // WELLNESS
   new SlashCommandBuilder()
     .setName("checkin")
-    .setDescription("Share your daily wellness check-in 🪺")
-    .addStringOption(o =>
-      o.setName("response")
-        .setDescription("How are you feeling today?")
+    .setDescription("Complete your daily wellness check-in")
+    .addStringOption(option =>
+      option
+        .setName("response")
+        .setDescription("How are you feeling or checking in today?")
         .setRequired(true)
         .setMaxLength(1000)
     )
-    .addStringOption(o =>
-      o.setName("visibility")
-        .setDescription("Choose who can see your check-in")
+    .addStringOption(option =>
+      option
+        .setName("visibility")
+        .setDescription("Share publicly in the channel or keep private")
         .setRequired(true)
         .addChoices(
           { name: "Public", value: "public" },
@@ -32,208 +32,234 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("water")
-    .setDescription("Log your water intake 💧")
-    .addNumberOption(o =>
-      o.setName("cups")
-        .setDescription("Amount of water in US cups")
+    .setDescription("Log cups of water drank today")
+    .addNumberOption(option =>
+      option
+        .setName("cups")
+        .setDescription("Number of cups of water")
         .setRequired(true)
         .setMinValue(0.1)
-        .setMaxValue(100)
+        .setMaxValue(50)
     ),
 
   new SlashCommandBuilder()
     .setName("steps")
-    .setDescription("Log your daily steps 👟")
-    .addIntegerOption(o =>
-      o.setName("count")
+    .setDescription("Log your daily steps")
+    .addIntegerOption(option =>
+      option
+        .setName("count")
         .setDescription("Number of steps")
         .setRequired(true)
         .setMinValue(1)
-        .setMaxValue(100000)
+        .setMaxValue(200000)
     ),
 
   new SlashCommandBuilder()
     .setName("sleep")
-    .setDescription("Log your sleep 🌙")
-    .addNumberOption(o =>
-      o.setName("hours")
-        .setDescription("Hours of sleep")
+    .setDescription("Log your hours of sleep")
+    .addNumberOption(option =>
+      option
+        .setName("hours")
+        .setDescription("Hours slept")
         .setRequired(true)
-        .setMinValue(0.1)
+        .setMinValue(0.5)
         .setMaxValue(24)
     ),
 
   new SlashCommandBuilder()
     .setName("selfcare")
-    .setDescription("Celebrate a little self-care 🕯️")
-    .addStringOption(o =>
-      o.setName("activity")
-        .setDescription("What did you do for yourself?")
+    .setDescription("Log a self-care activity")
+    .addStringOption(option =>
+      option
+        .setName("activity")
+        .setDescription("What self-care ritual did you do?")
         .setRequired(true)
         .setMaxLength(200)
     ),
 
   new SlashCommandBuilder()
     .setName("workout")
-    .setDescription("Log a workout or movement session 🏋️")
-    .addStringOption(o =>
-      o.setName("activity")
-        .setDescription("What kind of movement did you do?")
+    .setDescription("Log a workout or movement session")
+    .addStringOption(option =>
+      option
+        .setName("activity")
+        .setDescription("What movement or workout did you do?")
         .setRequired(true)
-        .setMaxLength(100)
+        .setMaxLength(200)
     )
-    .addIntegerOption(o =>
-      o.setName("minutes")
-        .setDescription("Duration in minutes")
+    .addIntegerOption(option =>
+      option
+        .setName("minutes")
+        .setDescription("Duration in minutes (optional)")
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(1440)
+        .setMaxValue(600)
     ),
 
   new SlashCommandBuilder()
     .setName("wellness")
-    .setDescription("Open your personal Nest Archives 📖")
-    .addUserOption(o =>
-      o.setName("member")
-        .setDescription("View another member's public achievements")
+    .setDescription("View your Nest Archives dashboard or another member's public profile")
+    .addUserOption(option =>
+      option
+        .setName("member")
+        .setDescription("Member whose public Nest profile you want to view")
         .setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("leaderboard")
-    .setDescription("See who is soaring in The Nest 🏆")
-    .addStringOption(o =>
-      o.setName("ranking")
-        .setDescription("Choose the leaderboard")
+    .setDescription("View The Nest leaderboards")
+    .addStringOption(option =>
+      option
+        .setName("ranking")
+        .setDescription("Choose which leaderboard to view")
         .setRequired(true)
         .addChoices(
           { name: "Weekly Wellness Points", value: "weekly" },
           { name: "Lifetime Owl XP", value: "lifetime" },
-          { name: "Arcade Points", value: "arcade" }
+          { name: "Midnight Arcade Points", value: "arcade" }
         )
     ),
 
   new SlashCommandBuilder()
     .setName("challenges")
-    .setDescription("View this week's Nest challenges 🏆"),
+    .setDescription("View your weekly Nest challenges"),
 
   new SlashCommandBuilder()
     .setName("timezone")
-    .setDescription("Manage your personal time zone 🕒")
-    .addSubcommand(s =>
-      s.setName("set")
-        .setDescription("Set your personal time zone")
-        .addStringOption(o =>
-          o.setName("zone")
-            .setDescription("Search for your city or time zone")
+    .setDescription("Manage your personal time zone")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("set")
+        .setDescription("Set your time zone")
+        .addStringOption(option =>
+          option
+            .setName("zone")
+            .setDescription("Choose your IANA time zone")
             .setRequired(true)
             .setAutocomplete(true)
         )
     )
-    .addSubcommand(s =>
-      s.setName("view")
-        .setDescription("View your saved time zone")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("view")
+        .setDescription("View your currently saved time zone")
     ),
 
-  // MIDNIGHT ARCADE
   new SlashCommandBuilder()
     .setName("arcade")
-    .setDescription("Enter Hootie's spooky little arcade 🦇"),
-
-  new SlashCommandBuilder()
-    .setName("lastletter")
-    .setDescription("Start or stop Last Letter in this channel 📝")
-    .addSubcommand(s =>
-      s.setName("start")
-        .setDescription("Start a new Last Letter game")
-    )
-    .addSubcommand(s =>
-      s.setName("stop")
-        .setDescription("Stop the Last Letter game")
-    ),
+    .setDescription("Open the Midnight Arcade menu"),
 
   new SlashCommandBuilder()
     .setName("madlibs")
-    .setDescription("Start a 15-prompt community Nest Madlib 😂"),
+    .setDescription("Start a 15-prompt community Madlibs game in this channel"),
 
   new SlashCommandBuilder()
-    .setName("arcadeleaderboard")
-    .setDescription("See the top players in the Nest Arcade 🏆"),
-
-  // CREATURES
-  new SlashCommandBuilder()
-    .setName("catch")
-    .setDescription("Try to catch a wild creature in The Nest! 🦇"),
+    .setName("lastletter")
+    .setDescription("Manage a chat-based Last Letter word chain game")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("start")
+        .setDescription("Start a Last Letter word chain in this channel")
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("stop")
+        .setDescription("Stop the active Last Letter word chain in this channel")
+    ),
 
   new SlashCommandBuilder()
     .setName("creatures")
-    .setDescription("Explore your collectible creatures 🐉")
-    .addSubcommand(s =>
-      s.setName("collection")
-        .setDescription("View your creature collection")
+    .setDescription("View your Hollow creature collection or manage spawns")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("collection")
+        .setDescription("View the creatures you have caught")
     )
-    .addSubcommand(s =>
-      s.setName("profile")
-        .setDescription("View a creature's profile")
-        .addStringOption(o =>
-          o.setName("creature")
-            .setDescription("Name of the creature")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("profile")
+        .setDescription("Inspect a creature from the Hollow catalog")
+        .addStringOption(option =>
+          option
+            .setName("creature")
+            .setDescription("Creature name or ID")
             .setRequired(true)
         )
     )
-    .addSubcommand(s =>
-      s.setName("setchannel")
-        .setDescription("Choose the public creature spawn channel")
-        .addChannelOption(o =>
-          o.setName("channel")
-            .setDescription("Channel for wild creature spawns")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("setchannel")
+        .setDescription("Set the channel where wild creatures spawn")
+        .addChannelOption(option =>
+          option
+            .setName("channel")
+            .setDescription("Text channel for creature spawns")
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
             .setRequired(true)
         )
     )
-    .addSubcommand(s =>
-      s.setName("start")
-        .setDescription("Start automatic creature spawning")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("start")
+        .setDescription("Enable automatic creature spawning")
     )
-    .addSubcommand(s =>
-      s.setName("stop")
-        .setDescription("Stop automatic creature spawning")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("stop")
+        .setDescription("Pause automatic creature spawning")
     )
-    .addSubcommand(s =>
-      s.setName("spawn")
-        .setDescription("Manually spawn a creature for testing")
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("spawn")
+        .setDescription("Manually spawn a wild creature now")
     ),
 
-  // JAIL
+  new SlashCommandBuilder()
+    .setName("catch")
+    .setDescription("Try to catch an active wild creature in this channel"),
+
+  new SlashCommandBuilder()
+    .setName("arcadeleaderboard")
+    .setDescription("View the Midnight Arcade high scores"),
+
   new SlashCommandBuilder()
     .setName("jail")
-    .setDescription("Send a mischievous member to Nest Jail 🦇")
-    .addUserOption(o =>
-      o.setName("member")
+    .setDescription("Send a member to Nest Jail")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+    .addUserOption(option =>
+      option
+        .setName("member")
         .setDescription("Member to jail")
         .setRequired(true)
     )
-    .addIntegerOption(o =>
-      o.setName("minutes")
-        .setDescription("Duration of the sentence in minutes")
+    .addIntegerOption(option =>
+      option
+        .setName("minutes")
+        .setDescription("Duration in minutes")
         .setRequired(true)
         .setMinValue(1)
         .setMaxValue(10080)
     )
-    .addStringOption(o =>
-      o.setName("reason")
-        .setDescription("Reason for the sentence")
+    .addStringOption(option =>
+      option
+        .setName("reason")
+        .setDescription("Reason for sending to Nest Jail")
         .setRequired(false)
         .setMaxLength(300)
     ),
 
   new SlashCommandBuilder()
     .setName("release")
-    .setDescription("Release a member from Nest Jail 🔓")
-    .addUserOption(o =>
-      o.setName("member")
+    .setDescription("Release a member from Nest Jail early")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+    .addUserOption(option =>
+      option
+        .setName("member")
         .setDescription("Member to release")
         .setRequired(true)
     )
-];
+].map(command => command.toJSON());
 
-module.exports = commands.map(command => command.toJSON());
+module.exports = commands;
