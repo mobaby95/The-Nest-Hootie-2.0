@@ -114,8 +114,11 @@ async function checkJailSentences(client) {
 }
 
 async function handleJailCommand(interaction, client) {
-  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
-    await interaction.reply({ content: "You need Manage Roles permission to use Nest Jail." });
+  if (!interaction.guild || !interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) {
+    await interaction.reply({
+      content: "🔒 Only moderators and administrators can use Nest Jail.",
+      ephemeral: true
+    });
     return;
   }
 
