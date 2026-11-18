@@ -91,8 +91,6 @@ db.exec(`
   );
 `);
 
-// Preserve the original wellness_points column and migrate its
-// existing values into lifetime_points if that column is new.
 const addedLifetimePoints = ensureColumn(
   "users",
   "lifetime_points",
@@ -124,7 +122,6 @@ ensureColumn(
   "INTEGER NOT NULL DEFAULT 0"
 );
 
-// Backfill dates for existing activity records.
 db.exec(`
   UPDATE wellness_logs
   SET activity_date = substr(created_at, 1, 10)
@@ -206,7 +203,6 @@ if (
   console.log("🛠️ Legacy check-in table migrated.");
 }
 
-// One rewarded check-in per user per local date.
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_wellness_daily_reward
   ON wellness_checkins(user_id, checkin_date)
@@ -302,6 +298,31 @@ db.exec(`
     story_text TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Saves active community games across bot restarts.
+  -- One active game per server/channel.
+  CREATE TABLE IF NOT EXISTS arcade_community_games (
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    game_type TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guild_id, channel_id)
+  );
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_arcade_transactions_user
+  ON arcade_transactions(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_arcade_stats_user
+  ON arcade_game_stats(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_arcade_stats_game
+  ON arcade_game_stats(game_name);
+
+  CREATE INDEX IF NOT EXISTS idx_arcade_story_channel
+  ON arcade_story_contributions(guild_id, channel_id);
 `);
 
 // ==========================================
@@ -362,19 +383,18 @@ db.exec(`
   ON creature_spawn_attempts(spawn_id);
 `);
 
-// Existing databases get this column safely.
 ensureColumn(
   "creature_catalog",
   "catch_chance",
-  "REAL NOT NULL DEFAULT 0.50"
+  "REAL NOT NULL DEFAULT 0.65"
 );
 
 // ==========================================
 // 🐉 HOOTIE 2.0 CREATURE CATALOG
 // ==========================================
 
-// Catch chance is stored as a decimal:
-// 0.80 = 80%, 0.10 = 10%, 0.02 = 2%.
+// Every creature has a 65% catch chance.
+// Rarity affects spawn frequency, not catch difficulty.
 
 const creatures = [
   {
@@ -382,96 +402,84 @@ const creatures = [
     name: "Gloomlet",
     type: "Shadow",
     rarity: "Common",
-    description: "A tiny shadow-dweller with curious eyes and a soft midnight glow.",
-    catchChance: 0.80
+    description: "A tiny shadow-dweller with curious eyes and a soft midnight glow."
   },
   {
     id: "cindercrow",
     name: "Cindercrow",
     type: "Fire",
     rarity: "Common",
-    description: "A soot-feathered crow with a warm ember tucked beneath one wing.",
-    catchChance: 0.80
+    description: "A soot-feathered crow with a warm ember tucked beneath one wing."
   },
   {
     id: "moonmoth",
     name: "Moonmoth",
     type: "Moon",
     rarity: "Common",
-    description: "A gentle moth whose wings shimmer like moonlit silk.",
-    catchChance: 0.80
+    description: "A gentle moth whose wings shimmer like moonlit silk."
   },
   {
     id: "thornkit",
     name: "Thornkit",
     type: "Nature",
     rarity: "Common",
-    description: "A mischievous woodland kitten with tiny leafy thorns.",
-    catchChance: 0.80
+    description: "A mischievous woodland kitten with tiny leafy thorns."
   },
   {
     id: "duskwisp",
     name: "Duskwisp",
     type: "Spirit",
     rarity: "Uncommon",
-    description: "A floating wisp that leaves a trail of violet sparks.",
-    catchChance: 0.65
+    description: "A floating wisp that leaves a trail of violet sparks."
   },
   {
     id: "hollowhare",
     name: "Hollowhare",
     type: "Shadow",
     rarity: "Uncommon",
-    description: "A quiet hare that appears only where the forest grows dark.",
-    catchChance: 0.65
+    description: "A quiet hare that appears only where the forest grows dark."
   },
   {
     id: "vesperwing",
     name: "Vesperwing",
     type: "Moon",
     rarity: "Uncommon",
-    description: "A graceful night creature with silver-tipped wings.",
-    catchChance: 0.65
+    description: "A graceful night creature with silver-tipped wings."
   },
   {
     id: "mycelune",
     name: "Mycelune",
     type: "Nature",
     rarity: "Uncommon",
-    description: "A small forest guardian crowned with glowing mushrooms.",
-    catchChance: 0.65
+    description: "A small forest guardian crowned with glowing mushrooms."
   },
   {
     id: "belladusk",
     name: "Belladusk",
     type: "Shadow",
     rarity: "Rare",
-    description: "A mysterious fox with dusk-colored fur and luminous markings.",
-    catchChance: 0.45
+    description: "A mysterious fox with dusk-colored fur and luminous markings."
   },
   {
     id: "astralith",
     name: "Astralith",
     type: "Starlight",
     rarity: "Ultra Rare",
-    description: "A celestial crystal dragon-deer said to carry fragments of the night sky.",
-    catchChance: 0.25
+    description: "A celestial crystal dragon-deer said to carry fragments of the night sky."
   },
   {
     id: "nocturne",
     name: "Nocturne",
     type: "Spirit",
     rarity: "Legendary",
-    description: "An ancient spirit companion whose song echoes through the Hollow.",
-    catchChance: 0.10
+    description: "An ancient spirit companion whose song echoes through the Hollow."
   },
   {
     id: "diva",
     name: "Diva",
     type: "Moon",
     rarity: "Mythic",
-    description: "A beloved black-and-white Cockapoo with a moonlit aura and a heart of pure mischief.",
-    catchChance: 0.02
+    description: "A beloved black-and-white Cockapoo with a moonlit aura and a heart of pure mischief."
   }
 ];
 
@@ -490,14 +498,14 @@ const upsertCreature = db.prepare(`
     @type,
     @rarity,
     @description,
-    @catchChance
+    0.65
   )
   ON CONFLICT(creature_id) DO UPDATE SET
     creature_name = excluded.creature_name,
     creature_type = excluded.creature_type,
     rarity = excluded.rarity,
     description = excluded.description,
-    catch_chance = excluded.catch_chance
+    catch_chance = 0.65
 `);
 
 db.transaction(() => {
@@ -507,7 +515,7 @@ db.transaction(() => {
 })();
 
 console.log("🐉 Creature catalog updated: 12 creatures ready.");
-console.log("🌙 Diva is Mythic with a 2% catch chance.");
+console.log("🎯 All creatures have a 65% catch chance.");
 
 // ==========================================
 // 🔒 MODERATION
@@ -532,18 +540,6 @@ db.exec(`
 // ==========================================
 
 db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_arcade_transactions_user
-  ON arcade_transactions(user_id);
-
-  CREATE INDEX IF NOT EXISTS idx_arcade_stats_user
-  ON arcade_game_stats(user_id);
-
-  CREATE INDEX IF NOT EXISTS idx_arcade_stats_game
-  ON arcade_game_stats(game_name);
-
-  CREATE INDEX IF NOT EXISTS idx_arcade_story_channel
-  ON arcade_story_contributions(guild_id, channel_id);
-
   CREATE INDEX IF NOT EXISTS idx_user_creatures_user
   ON user_creatures(user_id);
 
@@ -565,5 +561,6 @@ console.log("🏅 Badges and challenges ready");
 console.log("🦇 Arcade database ready");
 console.log("🐉 Creature collection and spawn database ready");
 console.log("🔒 Jail database ready");
+console.log("🎮 Community game persistence ready");
 
 module.exports = db;
