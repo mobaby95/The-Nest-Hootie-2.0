@@ -346,7 +346,7 @@ const creatures = [
     name: "Diva",
     type: "Moon",
     rarity: "Mythic",
-    description: "A beloved black-and-white Cockapoo with a moonlit aura and a heart of pure mischief."
+    description: "A beloved black-and-white havanese with a moonlit aura and a heart of pure mischief."
   }
 ];
 
