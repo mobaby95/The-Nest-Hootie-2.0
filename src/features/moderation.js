@@ -268,36 +268,67 @@ async function handleJailCommand(interaction, client) {
       files: [mugshot.attachment]
     });
 
-    // 2. Silly "Welcome to the Naughty Nest" graphic inside the jail channel
+    // 2. Silly "Welcome to the Naughty Nest" graphic inside JAIL_CHANNEL_ID
     const jChanId = jailChannelId();
-    if (jChanId) {
-      const jailChan =
-        guild.channels.cache.get(jChanId) ||
-        (await guild.channels.fetch(jChanId).catch(() => null));
+    if (!jChanId) {
+      await interaction.followUp({
+        content: "⚠️ `JAIL_CHANNEL_ID` is not set in Railway variables, so I couldn't post the welcome graphic in Naughty Nest.",
+        ephemeral: true
+      });
+      return;
+    }
 
-      if (jailChan && jailChan.isTextBased()) {
-        const sillyWelcome = await renderNaughtyNestWelcome({
-          targetUser,
-          minutes,
-          reason
-        });
+    const jailChan =
+      guild.channels.cache.get(jChanId) ||
+      (await guild.channels.fetch(jChanId).catch(() => null));
 
-        const welcomeEmbed = makeEmbed(
-          "🪶 WELCOME TO THE NAUGHTY NEST!",
-          `Pull up a perch, ${target}! You're stuck in the coop for **${minutes} minute(s)**.\n\n` +
-            `**Why you're here:** ${reason}\n` +
-            `**Freedom unlocks:** <t:${releaseUnix}:R>`,
-          COLORS.burgundy
-        ).setImage(`attachment://${sillyWelcome.fileName}`);
+    if (!jailChan || !jailChan.isTextBased()) {
+      await interaction.followUp({
+        content: `⚠️ Could not find a text channel for \`JAIL_CHANNEL_ID\` (\`${jChanId}\`). Check that Hootie can view that channel.`,
+        ephemeral: true
+      });
+      return;
+    }
 
-        await jailChan
-          .send({
-            content: `${target}`,
-            embeds: [welcomeEmbed],
-            files: [sillyWelcome.attachment]
-          })
-          .catch(err => console.error("Failed to send Naughty Nest welcome:", err));
-      }
+    const perms = jailChan.permissionsFor(botMember);
+    const missing = ["ViewChannel", "SendMessages", "EmbedLinks", "AttachFiles"].filter(
+      p => !perms?.has(PermissionFlagsBits[p])
+    );
+
+    if (missing.length) {
+      await interaction.followUp({
+        content: `⚠️ I'm missing permission(s) in <#${jailChan.id}>: **${missing.join(", ")}**. Grant those to Hootie's role in that channel!`,
+        ephemeral: true
+      });
+      return;
+    }
+
+    try {
+      const sillyWelcome = await renderNaughtyNestWelcome({
+        targetUser,
+        minutes,
+        reason
+      });
+
+      const welcomeEmbed = makeEmbed(
+        "🪶 WELCOME TO THE NAUGHTY NEST!",
+        `Pull up a perch, ${target}! You're stuck in the coop for **${minutes} minute(s)**.\n\n` +
+          `**Why you're here:** ${reason}\n` +
+          `**Freedom unlocks:** <t:${releaseUnix}:R>`,
+        COLORS.burgundy
+      ).setImage(`attachment://${sillyWelcome.fileName}`);
+
+      await jailChan.send({
+        content: `${target}`,
+        embeds: [welcomeEmbed],
+        files: [sillyWelcome.attachment]
+      });
+    } catch (err) {
+      console.error("Failed to send Naughty Nest welcome:", err);
+      await interaction.followUp({
+        content: `⚠️ Failed to post in <#${jailChan.id}>: \`${err.message}\``,
+        ephemeral: true
+      });
     }
     return;
   }
