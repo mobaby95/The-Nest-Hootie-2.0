@@ -55,7 +55,7 @@ const COLORS = {
 const FOOTER = "Hootie 2.0 • Where the night owls thrive 🖤";
 
 const LEVELS = [
-  { name: "Midnight Hatchling", emoji: "🐣", points: 0, image: "midnight-hatchling.png" },
+  { name: "Midnight Hatchling", emoji: "🐣", points: 0, image:"midnight-hatchling.png" },
   { name: "Moonlit Familiar", emoji: "🌙", points: 100, image: "moonlit-familiar.png" },
   { name: "Velvet Night Owl", emoji: "🦉", points: 250, image: "velvet-night-owl.png" },
   { name: "Crimson Oracle", emoji: "🔮", points: 500, image: "crimson-oracle.png" },
