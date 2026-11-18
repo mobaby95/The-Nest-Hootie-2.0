@@ -9,7 +9,6 @@ const db = new Database(databasePath);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
-// Keep the existing tables and add the new wellness/challenge tables safely.
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
@@ -118,34 +117,35 @@ function ensureColumn(table, column, definition) {
   }
 }
 
-ensureColumn("users", "weekly_points", "INTEGER DEFAULT 0");
+ensureColumn("users", "weekly_points", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("users", "weekly_period", "TEXT");
 ensureColumn("wellness_logs", "activity_date", "TEXT");
 ensureColumn("wellness_logs", "points_awarded", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("wellness_checkins", "timezone_used", "TEXT");
 ensureColumn("wellness_checkins", "reward_earned", "INTEGER NOT NULL DEFAULT 0");
 
-// Backfill local-date-compatible activity dates for older records.
 db.exec(`
   UPDATE wellness_logs
   SET activity_date = COALESCE(activity_date, substr(created_at, 1, 10))
   WHERE activity_date IS NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_wellness_logs_user_date
+  ON wellness_logs(user_id, activity_date, activity_type);
+
+  CREATE INDEX IF NOT EXISTS idx_wellness_checkins_user_date
+  ON wellness_checkins(user_id, checkin_date);
 `);
 
-// Migrate older check-in tables that enforced one check-in per day.
 const checkinsSchema = db.prepare(`
   SELECT sql FROM sqlite_master
   WHERE type = 'table' AND name = 'wellness_checkins'
 `).get();
 
-if (
-  checkinsSchema &&
-  checkinsSchema.sql.replace(/\s+/g, "").toUpperCase()
-    .includes("UNIQUE(USER_ID,CHECKIN_DATE)")
-) {
+if (checkinsSchema && checkinsSchema.sql.replace(/\s+/g, "").toUpperCase().includes("UNIQUE(USER_ID,CHECKIN_DATE)")) {
   const oldColumns = db.pragma("table_info(wellness_checkins)").map(column => column.name);
   const hasTimezone = oldColumns.includes("timezone_used");
   const hasReward = oldColumns.includes("reward_earned");
+
   db.transaction(() => {
     db.exec(`
       CREATE TABLE wellness_checkins_new (
@@ -158,8 +158,7 @@ if (
         reward_earned INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
-    `);
-    db.exec(`
+
       INSERT INTO wellness_checkins_new
         (id, user_id, response, visibility, checkin_date, timezone_used, reward_earned, created_at)
       SELECT
@@ -168,22 +167,22 @@ if (
         ${hasReward ? "reward_earned" : "1"},
         created_at
       FROM wellness_checkins;
+
       DROP TABLE wellness_checkins;
       ALTER TABLE wellness_checkins_new RENAME TO wellness_checkins;
     `);
   })();
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_wellness_checkins_user_date
+    ON wellness_checkins(user_id, checkin_date);
+  `);
 }
 
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_wellness_daily_reward
   ON wellness_checkins(user_id, checkin_date)
   WHERE reward_earned = 1;
-
-  CREATE INDEX IF NOT EXISTS idx_wellness_logs_user_date
-  ON wellness_logs(user_id, activity_date, activity_type);
-
-  CREATE INDEX IF NOT EXISTS idx_wellness_checkins_user_date
-  ON wellness_checkins(user_id, checkin_date);
 `);
 
 console.log("🖤 HOOTIE DATABASE CONNECTED");
