@@ -139,14 +139,24 @@ const TIMEZONES = [
   "UTC"
 ];
 
-// Catch rates by rarity.
-// Legendary creatures are the hardest to catch.
+// Fallback catch chances. The database catalog is the source
+// of truth when a creature has a saved catch_chance.
 const CREATURE_CATCH_CHANCES = {
-  Common: 80,
-  Uncommon: 65,
-  Rare: 45,
-  "Ultra Rare": 25,
-  Legendary: 10
+  Common: 0.80,
+  Uncommon: 0.65,
+  Rare: 0.45,
+  "Ultra Rare": 0.25,
+  Legendary: 0.10,
+  Mythic: 0.02
+};
+
+const RARITY_ORDER = {
+  Mythic: 1,
+  Legendary: 2,
+  "Ultra Rare": 3,
+  Rare: 4,
+  Uncommon: 5,
+  Common: 6
 };
 
 const SPAWN_MIN_MS = 20 * 60 * 1000;
@@ -534,7 +544,6 @@ function recordActivity(userId, type, value) {
   let pointsAwarded = 0;
 
   if (type === "water") {
-    // 2 points per cup, with a maximum of 20 water points per day.
     const earnedToday = db.prepare(`
       SELECT COALESCE(SUM(points_awarded), 0) AS total
       FROM wellness_logs
@@ -551,7 +560,6 @@ function recordActivity(userId, type, value) {
       remainingPoints
     );
   } else {
-    // Other wellness activities earn 5 points once per day.
     const already = db.prepare(`
       SELECT 1
       FROM wellness_logs
@@ -774,7 +782,6 @@ function dashboardPayload(user, stats, tab = "overview") {
   };
 }
 
-// Public profiles show achievements, not private activity logs.
 function publicWellnessEmbed(user, stats) {
   const points = stats.lifetime_points || 0;
   const rank = getLevel(points);
@@ -1075,11 +1082,13 @@ async function handleCreatureCommand(interaction) {
       WHERE uc.user_id = ?
       ORDER BY
         CASE c.rarity
-          WHEN 'Legendary' THEN 1
-          WHEN 'Ultra Rare' THEN 2
-          WHEN 'Rare' THEN 3
-          WHEN 'Uncommon' THEN 4
-          ELSE 5
+          WHEN 'Mythic' THEN 1
+          WHEN 'Legendary' THEN 2
+          WHEN 'Ultra Rare' THEN 3
+          WHEN 'Rare' THEN 4
+          WHEN 'Uncommon' THEN 5
+          WHEN 'Common' THEN 6
+          ELSE 7
         END,
         c.creature_name
     `).all(userId);
@@ -1140,6 +1149,7 @@ async function handleCreatureCommand(interaction) {
       `🐉 ${creature.creature_name}`,
       `**Type:** ${creature.creature_type}\n` +
       `**Rarity:** ${creature.rarity}\n` +
+      `**Catch chance:** ${Math.round(Number(creature.catch_chance) * 100)}%\n` +
       `**In your collection:** ${owned ? "Yes!" : "Not yet"}\n\n` +
       creature.description,
       COLORS.charcoal
@@ -1284,7 +1294,13 @@ function attemptCatch(userId, guildId, channelId) {
   const now = new Date().toISOString();
 
   const spawn = db.prepare(`
-    SELECT s.*, c.creature_name, c.creature_type, c.rarity, c.description
+    SELECT
+      s.*,
+      c.creature_name,
+      c.creature_type,
+      c.rarity,
+      c.description,
+      c.catch_chance
     FROM creature_spawns s
     JOIN creature_catalog c ON c.creature_id = s.creature_id
     WHERE s.guild_id = ?
@@ -1323,8 +1339,11 @@ function attemptCatch(userId, guildId, channelId) {
       return { result: "gone", spawn };
     }
 
-    const chance = CREATURE_CATCH_CHANCES[spawn.rarity] || 50;
-    const success = Math.random() * 100 < chance;
+    const chance = Number.isFinite(Number(spawn.catch_chance))
+      ? Number(spawn.catch_chance)
+      : (CREATURE_CATCH_CHANCES[spawn.rarity] || 0.50);
+
+    const success = Math.random() < chance;
 
     db.prepare(`
       INSERT INTO creature_spawn_attempts (
@@ -1336,7 +1355,11 @@ function attemptCatch(userId, guildId, channelId) {
     `).run(spawn.id, userId, success ? 1 : 0);
 
     if (!success) {
-      return { result: "failed", spawn, chance };
+      return {
+        result: "failed",
+        spawn,
+        chance: Math.round(chance * 100)
+      };
     }
 
     const claimed = db.prepare(`
@@ -1606,7 +1629,6 @@ async function checkJailSentences() {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
-    // TIMEZONE AUTOCOMPLETE
     if (interaction.isAutocomplete()) {
       if (
         interaction.commandName === "timezone" &&
@@ -1625,7 +1647,6 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // MADLIBS MODAL SUBMISSION
     if (interaction.isModalSubmit()) {
       if (interaction.customId === "hootie:madlibs") {
         const values = {
@@ -1674,7 +1695,6 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // DASHBOARD BUTTONS
     if (interaction.isButton()) {
       if (interaction.customId.startsWith("hootie:")) {
         const tab = interaction.customId.split(":")[1];
