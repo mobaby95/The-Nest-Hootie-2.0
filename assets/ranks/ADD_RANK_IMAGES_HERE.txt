@@ -1,0 +1,1 @@
+Add the six rank PNG files listed in README.md to this folder.
