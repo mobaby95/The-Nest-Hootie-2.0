@@ -23,10 +23,7 @@ db.pragma("foreign_keys = ON");
 // ==========================================
 
 db.exec(`
-  // ========================================
-  // MEMBERS
-  // ========================================
-
+  -- MEMBERS
   CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     wellness_points INTEGER DEFAULT 0,
@@ -35,10 +32,7 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  // ========================================
-  // WELLNESS ACTIVITY
-  // ========================================
-
+  -- WELLNESS ACTIVITY
   CREATE TABLE IF NOT EXISTS wellness_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
@@ -71,10 +65,7 @@ db.exec(`
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  // ========================================
-  // WELLNESS BADGES + CHALLENGES
-  // ========================================
-
+  -- WELLNESS BADGES AND CHALLENGES
   CREATE TABLE IF NOT EXISTS user_badges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
@@ -104,11 +95,7 @@ db.exec(`
     UNIQUE(user_id, week_start, challenge_id)
   );
 
-  // ========================================
-  // ARCADE POINTS
-  // SEPARATE FROM WELLNESS POINTS
-  // ========================================
-
+  -- ARCADE POINTS: SEPARATE FROM WELLNESS
   CREATE TABLE IF NOT EXISTS arcade_points (
     user_id TEXT PRIMARY KEY,
     points INTEGER DEFAULT 0
@@ -130,10 +117,7 @@ db.exec(`
     played_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  // ========================================
-  // LAST LETTER GAME
-  // ========================================
-
+  -- LAST LETTER GAME
   CREATE TABLE IF NOT EXISTS arcade_lastletter_state (
     guild_id TEXT NOT NULL,
     channel_id TEXT NOT NULL,
@@ -145,10 +129,7 @@ db.exec(`
     PRIMARY KEY (guild_id, channel_id)
   );
 
-  // ========================================
-  // COMMUNITY STORY GAME
-  // ========================================
-
+  -- COMMUNITY STORY GAME
   CREATE TABLE IF NOT EXISTS arcade_story_contributions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id TEXT NOT NULL,
@@ -158,10 +139,7 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  // ========================================
-  // MADLIBS GAME HISTORY
-  // ========================================
-
+  -- MADLIBS HISTORY
   CREATE TABLE IF NOT EXISTS arcade_madlibs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id TEXT,
@@ -171,10 +149,7 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  // ========================================
-  // ORIGINAL COLLECTIBLE CREATURES
-  // ========================================
-
+  -- ORIGINAL COLLECTIBLE CREATURES
   CREATE TABLE IF NOT EXISTS creature_catalog (
     creature_id TEXT PRIMARY KEY,
     creature_name TEXT NOT NULL,
@@ -192,10 +167,7 @@ db.exec(`
     UNIQUE(user_id, creature_id)
   );
 
-  // ========================================
-  // MODERATION
-  // ========================================
-
+  -- MODERATION
   CREATE TABLE IF NOT EXISTS jail_sentences (
     user_id TEXT PRIMARY KEY,
     guild_id TEXT NOT NULL,
@@ -261,8 +233,6 @@ db.exec(`
 
 // ==========================================
 // 🔄 LEGACY CHECK-IN MIGRATION
-// Allows multiple check-ins per day while
-// preserving existing check-in records.
 // ==========================================
 
 const checkinsSchema = db.prepare(`
@@ -341,7 +311,7 @@ db.exec(`
 `);
 
 // ==========================================
-// 🦇 ORIGINAL NEST CREATURE CATALOG
+// 🐉 ORIGINAL NEST CREATURE CATALOG
 // ==========================================
 
 const creatures = [
