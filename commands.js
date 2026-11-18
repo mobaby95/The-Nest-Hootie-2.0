@@ -82,12 +82,8 @@ const commands = [
   new SlashCommandBuilder()
     .setName("lastletter")
     .setDescription("Start or stop Last Letter in this channel 📝")
-    .addSubcommand(s =>
-      s.setName("start").setDescription("Start a new Last Letter game")
-    )
-    .addSubcommand(s =>
-      s.setName("stop").setDescription("Stop the Last Letter game")
-    ),
+    .addSubcommand(s => s.setName("start").setDescription("Start a new Last Letter game"))
+    .addSubcommand(s => s.setName("stop").setDescription("Stop the Last Letter game")),
 
   new SlashCommandBuilder()
     .setName("madlibs")
