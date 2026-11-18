@@ -159,4 +159,96 @@ client.on("interactionCreate", async interaction => {
           .map(c => ({ name: `${c.creature_name} (${c.rarity})`, value: c.creature_name }));
         await interaction.respond(matches);
       }
-      return
+      return;
+    }
+
+    // 2. Buttons
+    if (interaction.isButton()) {
+      const parts = interaction.customId.split(":");
+
+      if (parts[0] === "hootie") {
+        const [, tab, targetUserId] = parts;
+        const targetUser = await client.users.fetch(targetUserId).catch(() => interaction.user);
+        const stats = getStats(targetUser.id);
+        const payload = await dashboardPayload(targetUser, stats, tab);
+        await interaction.update({ ...payload, attachments: [] });
+        return;
+      }
+
+      if (parts[0] === "arcade") {
+        const [, tab, targetUserId] = parts;
+        const targetUser = await client.users.fetch(targetUserId).catch(() => interaction.user);
+        const payload = await buildArcadeDashboardPayload(targetUser, tab);
+        await interaction.update({ ...payload, attachments: [] });
+        return;
+      }
+
+      if (parts[0] === "lb") {
+        const ranking = parts[1] || "weekly";
+        await interaction.update(buildLeaderboardPayload(ranking));
+        return;
+      }
+    }
+
+    // 3. Select Menus
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === "help:category") {
+        const category = interaction.values[0] || "wellness";
+        await interaction.update(buildHelpPayload(category));
+        return;
+      }
+    }
+
+    // 4. Slash Commands
+    if (!interaction.isChatInputCommand()) return;
+
+    const { commandName } = interaction;
+
+    if (commandName === "wellness") {
+      await handleWellnessCommand(interaction);
+    } else if (commandName === "arcade") {
+      await handleArcadeCommand(interaction);
+    } else if (commandName === "creatures") {
+      await handleCreatureCommand(interaction, client);
+    } else if (commandName === "leaderboard") {
+      const ranking = interaction.options.getString("ranking") || "weekly";
+      await interaction.reply(buildLeaderboardPayload(ranking));
+    } else if (commandName === "jail") {
+      await handleJailCommand(interaction, client);
+    } else if (commandName === "nest") {
+      const logo = getLogoAttachment();
+      const embed = makeEmbed(
+        "🖤 WELCOME TO THE NEST",
+        "Hootie 2.0 watches over our cozy nocturnal sanctuary—tracking daily wellness rituals, hosting Midnight Arcade word games, and guarding the wild creatures of the Hollow.\n\n" +
+        "Use `/help` to explore every command category!",
+        COLORS.burgundy
+      );
+      if (logo) embed.setThumbnail("attachment://hootie-logo.jpg");
+
+      await interaction.reply({
+        embeds: [embed],
+        ...(logo ? { files: [logo] } : {})
+      });
+    } else if (commandName === "help") {
+      await interaction.reply(buildHelpPayload("wellness"));
+    } else if (commandName === "ping") {
+      const latency = Math.round(client.ws.ping);
+      await interaction.reply({
+        embeds: [makeEmbed("🦉 HOOT!", `Hootie 2.0 is awake and watching the rafters.\n**Gateway Latency:** ${latency}ms`, COLORS.charcoal)]
+      });
+    }
+  } catch (error) {
+    console.error("Interaction error:", error);
+    const payload = { content: "⚠️ Something ruffled my feathers while running that command. Please try again!" };
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp(payload).catch(() => {});
+    } else {
+      await interaction.reply(payload).catch(() => {});
+    }
+  }
+});
+
+(async () => {
+  await registerCommands();
+  await client.login(process.env.DISCORD_TOKEN);
+})();
