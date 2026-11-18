@@ -15,6 +15,7 @@ const {
   splitTextChunks
 } = require("../utils/embeds");
 const { renderArcadeDashboard } = require("../../dashboardRenderer");
+const { renderStorybookCover } = require("../../graphicsRenderer");
 
 function addArcadePoints(userId, amount, reason) {
   ensureUser(userId);
@@ -382,6 +383,19 @@ async function processMadlibsMessage(message) {
   }
 
   if (txResult.status === "completed") {
+    const uniqueIds = [...new Set(txResult.contributors)];
+    const avatars = [];
+    for (const uid of uniqueIds.slice(0, 8)) {
+      const u = message.client.users.cache.get(uid) || await message.client.users.fetch(uid).catch(() => null);
+      if (u) avatars.push(u.displayAvatarURL({ extension: "png", size: 128 }));
+    }
+
+    const cover = await renderStorybookCover({
+      modeLabel: "Community Madlibs Complete",
+      title: txResult.title,
+      contributors: avatars
+    });
+
     await message.reply({
       embeds: [
         makeEmbed(
@@ -390,8 +404,9 @@ async function processMadlibsMessage(message) {
           `${txResult.story}\n\n` +
           `**Contributors:** ${formatContributors(txResult.contributors)}`,
           COLORS.crimson
-        )
-      ]
+        ).setImage(`attachment://${cover.fileName}`)
+      ],
+      files: [cover.attachment]
     });
   }
 }
@@ -515,6 +530,19 @@ async function handleStoryPrefixCommand(message, action) {
       return;
     }
 
+    const uniqueIds = [...new Set(endResult.entries.map(e => e.user_id))];
+    const avatars = [];
+    for (const uid of uniqueIds.slice(0, 8)) {
+      const u = message.client.users.cache.get(uid) || await message.client.users.fetch(uid).catch(() => null);
+      if (u) avatars.push(u.displayAvatarURL({ extension: "png", size: 128 }));
+    }
+
+    const cover = await renderStorybookCover({
+      modeLabel: "The Completed Nest Story",
+      title: endResult.prompt,
+      contributors: avatars
+    });
+
     const fullStory = endResult.entries.map(entry => entry.contribution).join(" ");
     const contributors = formatContributors(endResult.entries.map(entry => entry.user_id));
     const storyChunks = splitTextChunks(fullStory, 3500);
@@ -526,9 +554,18 @@ async function handleStoryPrefixCommand(message, action) {
       description += storyChunks[i];
       if (isLast) description += `\n\n**Contributors:** ${contributors}`;
 
-      await message.channel.send({
-        embeds: [makeEmbed(isFirst ? "📚 THE COMPLETED NEST STORY" : `📚 THE COMPLETED NEST STORY (Part ${i + 1})`, description, COLORS.crimson)]
-      });
+      const embed = makeEmbed(
+        isFirst ? "📚 THE COMPLETED NEST STORY" : `📚 THE COMPLETED NEST STORY (Part ${i + 1})`,
+        description,
+        COLORS.crimson
+      );
+
+      if (isFirst) {
+        embed.setImage(`attachment://${cover.fileName}`);
+        await message.channel.send({ embeds: [embed], files: [cover.attachment] });
+      } else {
+        await message.channel.send({ embeds: [embed] });
+      }
     }
   }
 }
