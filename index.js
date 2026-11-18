@@ -35,7 +35,11 @@ if (!process.env.CLIENT_ID) {
 // ==========================================
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 const rest = new REST({ version: "10" })
@@ -139,8 +143,6 @@ const TIMEZONES = [
   "UTC"
 ];
 
-// Fallback catch chances. The database catalog is the source
-// of truth when a creature has a saved catch_chance.
 const CREATURE_CATCH_CHANCES = {
   Common: 0.80,
   Uncommon: 0.65,
@@ -292,6 +294,10 @@ function creatureImage(creatureId) {
   });
 }
 
+function randomItem(items) {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
 // ==========================================
 // 🪺 WELLNESS POINTS + OWL XP
 // ==========================================
@@ -341,10 +347,6 @@ function logGame(userId, gameName, score) {
 function recordArcadeGame(userId, game, points, reason) {
   addArcadePoints(userId, points, reason);
   logGame(userId, game, points);
-}
-
-function randomItem(items) {
-  return items[Math.floor(Math.random() * items.length)];
 }
 
 // ==========================================
@@ -822,7 +824,8 @@ async function showArcade(interaction) {
       makeEmbed(
         "🦇 The Midnight Arcade",
         "**WORD GAMES**\n" +
-        "`/lastletter` — Keep the word chain alive.\n" +
+        "`/lastletter start` — Start a word chain in this channel.\n" +
+        "`/lastletter stop` — Stop the current word chain.\n" +
         "`/madlibs` — Create a ridiculous community story.\n" +
         "`/story` — Add a line to the community tale.\n\n" +
         "**COLLECTIBLES**\n" +
@@ -875,6 +878,265 @@ function makeMadlib(values) {
     `And that is how the legend began.`
   );
 }
+
+// ==========================================
+// 📝 LAST LETTER — CHAT-BASED GAME
+// ==========================================
+
+function getRandomStartingLetter() {
+  const letters = "abcdefghijklmnopqrstuvwxyz";
+  return letters[Math.floor(Math.random() * letters.length)];
+}
+
+async function handleLastLetterCommand(interaction) {
+  if (!interaction.guildId) {
+    await interaction.reply({
+      content: "Last Letter can only be played inside a Nest server channel.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const subcommand = interaction.options.getSubcommand();
+
+  // Only moderators/admins can start or stop the game.
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await interaction.reply({
+      content: "Only members with Manage Server permission can start or stop Last Letter.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const guildId = interaction.guildId;
+  const channelId = interaction.channelId;
+
+  if (subcommand === "start") {
+    const startingLetter = getRandomStartingLetter();
+
+    // Reset this channel's game when a new round begins.
+    db.prepare(`
+      INSERT INTO arcade_lastletter_state (
+        guild_id,
+        channel_id,
+        current_letter,
+        last_player_id,
+        used_words,
+        round_count,
+        updated_at
+      )
+      VALUES (?, ?, ?, '', '[]', 0, CURRENT_TIMESTAMP)
+      ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+        current_letter = excluded.current_letter,
+        last_player_id = '',
+        used_words = '[]',
+        round_count = 0,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      guildId,
+      channelId,
+      startingLetter
+    );
+
+    await interaction.reply({
+      embeds: [
+        makeEmbed(
+          "📝 LAST LETTER IS OPEN!",
+          `The Nest word chain has begun!\n\n` +
+          `**Starting letter: ${startingLetter.toUpperCase()}**\n\n` +
+          `Type a word directly into this channel that starts with **${startingLetter.toUpperCase()}**.\n\n` +
+          "The next player must use the last letter of the previous word. No repeated words, and no taking two turns in a row!\n\n" +
+          "**Each valid word earns +5 Arcade Points.**",
+          COLORS.charcoal
+        )
+      ]
+    });
+
+    return;
+  }
+
+  if (subcommand === "stop") {
+    const result = db.prepare(`
+      DELETE FROM arcade_lastletter_state
+      WHERE guild_id = ?
+        AND channel_id = ?
+    `).run(guildId, channelId);
+
+    await interaction.reply({
+      embeds: [
+        makeEmbed(
+          "🌙 LAST LETTER HAS ENDED",
+          result.changes
+            ? "The word chain has been closed. Thanks for playing, night owls!"
+            : "There isn't an active Last Letter game in this channel.",
+          COLORS.burgundy
+        )
+      ]
+    });
+
+    return;
+  }
+}
+
+// ==========================================
+// 📝 LAST LETTER — PLAYER CHAT MESSAGES
+// ==========================================
+
+client.on(Events.MessageCreate, async message => {
+  try {
+    // Ignore DMs, bots, and webhook messages.
+    if (!message.guild || message.author.bot || message.webhookId) {
+      return;
+    }
+
+    // Only a single word made of English letters counts as a turn.
+    // Normal sentences and regular conversation are ignored.
+    const rawWord = message.content.trim();
+
+    if (!/^[a-zA-Z]{2,30}$/.test(rawWord)) {
+      return;
+    }
+
+    const word = rawWord.toLowerCase();
+
+    const guildId = message.guild.id;
+    const channelId = message.channel.id;
+    const userId = message.author.id;
+
+    const result = db.transaction(() => {
+      // Re-read the state inside the transaction.
+      // This prevents two players from claiming the same turn.
+      const state = db.prepare(`
+        SELECT *
+        FROM arcade_lastletter_state
+        WHERE guild_id = ?
+          AND channel_id = ?
+      `).get(guildId, channelId);
+
+      if (!state) {
+        return { status: "inactive" };
+      }
+
+      let usedWords = [];
+
+      try {
+        usedWords = JSON.parse(state.used_words || "[]");
+
+        if (!Array.isArray(usedWords)) {
+          usedWords = [];
+        }
+      } catch {
+        usedWords = [];
+      }
+
+      if (usedWords.includes(word)) {
+        return {
+          status: "duplicate",
+          word
+        };
+      }
+
+      if (
+        state.current_letter &&
+        word[0] !== state.current_letter.toLowerCase()
+      ) {
+        return {
+          status: "wrong_letter",
+          requiredLetter: state.current_letter
+        };
+      }
+
+      if (state.last_player_id === userId) {
+        return {
+          status: "same_player"
+        };
+      }
+
+      usedWords.push(word);
+
+      const nextLetter = word[word.length - 1];
+
+      db.prepare(`
+        UPDATE arcade_lastletter_state
+        SET current_letter = ?,
+            last_player_id = ?,
+            used_words = ?,
+            round_count = round_count + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE guild_id = ?
+          AND channel_id = ?
+      `).run(
+        nextLetter,
+        userId,
+        JSON.stringify(usedWords),
+        guildId,
+        channelId
+      );
+
+      // Award points inside the same transaction as the accepted word.
+      recordArcadeGame(
+        userId,
+        "lastletter",
+        5,
+        `Last Letter: ${word}`
+      );
+
+      return {
+        status: "accepted",
+        word,
+        nextLetter,
+        roundCount: usedWords.length
+      };
+    })();
+
+    if (result.status === "inactive") {
+      return;
+    }
+
+    if (result.status === "duplicate") {
+      await message.reply({
+        content: `🌙 **${result.word}** has already been used in this round. Try another word!`
+      });
+      return;
+    }
+
+    if (result.status === "wrong_letter") {
+      await message.reply({
+        content: `🦉 Not quite! The next word must start with **${result.requiredLetter.toUpperCase()}**.`
+      });
+      return;
+    }
+
+    if (result.status === "same_player") {
+      await message.reply({
+        content: "🪶 Give another night owl a turn before playing again!"
+      });
+      return;
+    }
+
+    if (result.status === "accepted") {
+      await message.reply({
+        embeds: [
+          makeEmbed(
+            "🔤 WORD ACCEPTED!",
+            `**${message.author.username}** played **${result.word}**!\n\n` +
+            `The next word must start with **${result.nextLetter.toUpperCase()}**.\n\n` +
+            `✨ **+5 Arcade Points**\n` +
+            `📝 Words played this round: **${result.roundCount}**`,
+            COLORS.charcoal
+          )
+        ]
+      });
+    }
+
+  } catch (error) {
+    console.error("Last Letter message error:", error);
+
+    await message.reply({
+      content: "🖤 Hootie had a little trouble processing that word. Please try again."
+    }).catch(() => {});
+  }
+});
 
 // ==========================================
 // 🐉 CREATURE SPAWNING SYSTEM
@@ -2155,106 +2417,9 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
+    // LAST LETTER START / STOP
     if (interaction.commandName === "lastletter") {
-      const raw = interaction.options.getString("word", true)
-        .trim()
-        .toLowerCase();
-
-      const word = raw.replace(/[^a-z]/g, "");
-
-      if (word.length < 2 || word !== raw) {
-        await interaction.reply({
-          content: "Use one word containing only English letters (at least two).",
-          ephemeral: true
-        });
-        return;
-      }
-
-      const guildId = interaction.guildId || "dm";
-      const channelId = interaction.channelId;
-
-      const state = db.prepare(`
-        SELECT *
-        FROM arcade_lastletter_state
-        WHERE guild_id = ?
-          AND channel_id = ?
-      `).get(guildId, channelId);
-
-      let used;
-
-      try {
-        used = state ? JSON.parse(state.used_words || "[]") : [];
-      } catch {
-        used = [];
-      }
-
-      if (used.includes(word)) {
-        await interaction.reply({
-          content: `**${word}** has already been used in this round.`,
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (state?.current_letter && word[0] !== state.current_letter) {
-        await interaction.reply({
-          content: `The next word must begin with **${state.current_letter.toUpperCase()}**.`,
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (state?.last_player_id === userId) {
-        await interaction.reply({
-          content: "Give another night owl a turn before playing again!",
-          ephemeral: true
-        });
-        return;
-      }
-
-      used.push(word);
-
-      const nextLetter = word[word.length - 1];
-
-      db.prepare(`
-        INSERT INTO arcade_lastletter_state (
-          guild_id,
-          channel_id,
-          current_letter,
-          last_player_id,
-          used_words,
-          round_count,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-        ON CONFLICT(guild_id, channel_id) DO UPDATE SET
-          current_letter = excluded.current_letter,
-          last_player_id = excluded.last_player_id,
-          used_words = excluded.used_words,
-          round_count = arcade_lastletter_state.round_count + 1,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(
-        guildId,
-        channelId,
-        nextLetter,
-        userId,
-        JSON.stringify(used)
-      );
-
-      recordArcadeGame(userId, "lastletter", 5, `Last Letter: ${word}`);
-
-      await interaction.reply({
-        embeds: [
-          makeEmbed(
-            "🔤 THE LAST LETTER",
-            `**${interaction.user.username}** played **${word}**!\n\n` +
-            `Next word starts with **${nextLetter.toUpperCase()}**.\n` +
-            `+5 Arcade Points · ${used.length} words in this round.`,
-            COLORS.charcoal
-          )
-        ]
-      });
-
+      await handleLastLetterCommand(interaction);
       return;
     }
 
@@ -2526,6 +2691,7 @@ client.once(Events.ClientReady, async readyClient => {
 
     console.log("🪺 Wellness system ready");
     console.log("🦇 Midnight Arcade ready");
+    console.log("📝 Chat-based Last Letter ready");
     console.log("🐉 Creature spawning system ready");
     console.log("🔒 Jail sentence checker ready");
 
