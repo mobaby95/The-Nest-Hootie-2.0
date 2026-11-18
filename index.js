@@ -185,7 +185,8 @@ client.on("interactionCreate", async interaction => {
 
       if (parts[0] === "lb") {
         const ranking = parts[1] || "weekly";
-        await interaction.update(buildLeaderboardPayload(ranking));
+        const payload = await buildLeaderboardPayload(ranking, client);
+        await interaction.update({ ...payload, attachments: [] });
         return;
       }
     }
@@ -212,7 +213,9 @@ client.on("interactionCreate", async interaction => {
       await handleCreatureCommand(interaction, client);
     } else if (commandName === "leaderboard") {
       const ranking = interaction.options.getString("ranking") || "weekly";
-      await interaction.reply(buildLeaderboardPayload(ranking));
+      await interaction.deferReply();
+      const payload = await buildLeaderboardPayload(ranking, client);
+      await interaction.editReply(payload);
     } else if (commandName === "jail") {
       await handleJailCommand(interaction, client);
     } else if (commandName === "nest") {
