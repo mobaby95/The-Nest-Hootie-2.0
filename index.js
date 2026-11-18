@@ -16,9 +16,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
   PermissionFlagsBits
 } = require("discord.js");
 
@@ -143,14 +140,20 @@ const TIMEZONES = [
   "UTC"
 ];
 
-const CREATURE_CATCH_CHANCES = {
-  Common: 0.80,
-  Uncommon: 0.65,
-  Rare: 0.45,
-  "Ultra Rare": 0.25,
-  Legendary: 0.10,
-  Mythic: 0.02
-};
+// ==========================================
+// 🐉 CREATURE SPAWN WEIGHTS & CATCH CHANCE
+// ==========================================
+
+const UNIVERSAL_CATCH_CHANCE = 0.65;
+
+const RARITY_SPAWN_WEIGHTS = [
+  { rarity: "Common", weight: 50 },
+  { rarity: "Uncommon", weight: 25 },
+  { rarity: "Rare", weight: 15 },
+  { rarity: "Ultra Rare", weight: 7 },
+  { rarity: "Legendary", weight: 2 },
+  { rarity: "Mythic", weight: 1 }
+];
 
 const RARITY_ORDER = {
   Mythic: 1,
@@ -166,6 +169,149 @@ const SPAWN_MAX_MS = 40 * 60 * 1000;
 const SPAWN_LIFETIME_MS = 5 * 60 * 1000;
 
 let spawnTimer = null;
+
+// ==========================================
+// 📖 COMMUNITY MADLIBS TEMPLATES (15 PROMPTS)
+// ==========================================
+
+const MADLIBS_TEMPLATES = [
+  {
+    id: "midnight_banquet",
+    title: "The Midnight Banquet of the Hollow",
+    prompts: [
+      "an adjective",
+      "a nocturnal creature or animal",
+      "a plural noun",
+      "a type of beverage",
+      "a verb ending in -ing",
+      "a spooky or cozy place",
+      "an adverb (ending in -ly)",
+      "a piece of clothing or accessory",
+      "a silly sound effect",
+      "a food item",
+      "another adjective",
+      "a plural body part or object",
+      "a verb (past tense)",
+      "an exclamation",
+      "a magical or mysterious object"
+    ],
+    build(a) {
+      return (
+        `Under a **${a[0]}** moon in the deepest corner of The Nest, a **${a[1]}** hosted an urgent midnight banquet. ` +
+        `Every guest arrived carrying **${a[2]}** and a warm goblet of **${a[3]}**.\n\n` +
+        `Before anyone could sit down, Hootie started **${a[4]}** right in the middle of the **${a[5]}**. ` +
+        `The crowd gasped **${a[6]}** as the host adjusted their **${a[7]}** and let out a loud “**${a[8]}**!”\n\n` +
+        `For the main course, platters of enchanted **${a[9]}** floated across the table, giving off a **${a[10]}** glow. ` +
+        `Suddenly, everyone’s **${a[11]}** began to shimmer, and the oldest owl in the room **${a[12]}** onto the chandelier.\n\n` +
+        `“**${a[13]}**!” echoed through the rafters as someone accidentally dropped a **${a[14]}** into the punch bowl—officially making it the greatest night in Hollow history.`
+      );
+    }
+  },
+  {
+    id: "cursed_library",
+    title: "Mystery in the Velvet Archives",
+    prompts: [
+      "an adjective",
+      "a profession or role",
+      "a plural noun",
+      "a smell or scent",
+      "a verb (base form)",
+      "a number",
+      "a strange creature",
+      "an adjective",
+      "a musical instrument",
+      "a verb ending in -ing",
+      "a food or snack",
+      "a color",
+      "a place in a castle or forest",
+      "an exclamation",
+      "a noun"
+    ],
+    build(a) {
+      return (
+        `Late one **${a[0]}** evening, a wandering **${a[1]}** sneaked into the Velvet Archives searching for lost **${a[2]}**. ` +
+        `The air smelled strongly of **${a[3]}**, which was the first sign something was about to **${a[4]}**.\n\n` +
+        `On shelf number **${a[5]}**, a tiny **${a[6]}** was guarding a **${a[7]}** spellbook while playing a **${a[8]}**. ` +
+        `Instead of running away, the intruder began **${a[9]}** and offered a handful of **${a[10]}** as a peace offering.\n\n` +
+        `In a flash of **${a[11]}** smoke, the bookshelves slid open to reveal a secret **${a[12]}**. ` +
+        `“**${a[13]}**!” cried Hootie from the rafters, swooping down to claim the legendary **${a[14]}** before anyone else could touch it.`
+      );
+    }
+  },
+  {
+    id: "hollow_expedition",
+    title: "The Great Moonwell Expedition",
+    prompts: [
+      "an adjective",
+      "a vehicle or mode of transport",
+      "a plural noun",
+      "a weather condition",
+      "a verb (past tense)",
+      "an animal",
+      "an adverb (ending in -ly)",
+      "a liquid",
+      "an adjective",
+      "a piece of furniture",
+      "a verb ending in -ing",
+      "a snack",
+      "a body part",
+      "an exclamation",
+      "a plural noun"
+    ],
+    build(a) {
+      return (
+        `Armed with only a **${a[0]}** lantern and a borrowed **${a[1]}**, the night owls set out to find the fabled Moonwell. ` +
+        `Their backpacks were stuffed with **${a[2]}** in case the **${a[3]}** got worse.\n\n` +
+        `Halfway through the forest, a giant **${a[4]}** right across their path! A passing **${a[5]}** watched **${a[6]}** as the group accidentally spilled **${a[7]}** all over their **${a[8]}** map.\n\n` +
+        `At last, they reached a clearing containing a velvet **${a[9]}** and a fountain that was **${a[10]}** non-stop. ` +
+        `After sharing some **${a[11]}**, every traveler felt a tingle in their **${a[12]}**.\n\n` +
+        `“**${a[13]}**!” shouted the lookout, realizing the true treasure of the Hollow had been **${a[14]}** all along.`
+      );
+    }
+  }
+];
+
+// ==========================================
+// 📜 CONTINUE THE STORY PROMPTS
+// ==========================================
+
+const STORY_PROMPTS = [
+  "Beneath a silver eclipse, a mysterious letter arrived at the gates of The Nest with no return address...",
+  "At the stroke of midnight, the lanterns in the Hollow all turned crimson at the exact same moment...",
+  "Someone left an unhatched obsidian egg on the Velvet Archives desk with a note reading: 'Do not let it get cold...'",
+  "Deep inside the Whispering Woods, a hidden door appeared in the trunk of the oldest hollow oak...",
+  "Tonight was supposed to be a quiet evening at the Midnight Arcade—until one of the machines started printing prophecies...",
+  "A traveler from beyond the mist knocked three times on Hootie's window carrying a locked music box..."
+];
+
+// ==========================================
+// 🗄️ EXTRA SQLITE TABLES FOR GAMES
+// ==========================================
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS arcade_active_games (
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    game_type TEXT NOT NULL,
+    started_by TEXT NOT NULL,
+    state_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guild_id, channel_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS arcade_story_sessions (
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    started_by TEXT NOT NULL,
+    last_player_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guild_id, channel_id)
+  );
+`);
 
 // ==========================================
 // 🌙 GENERAL HELPERS
@@ -296,6 +442,105 @@ function creatureImage(creatureId) {
 
 function randomItem(items) {
   return items[Math.floor(Math.random() * items.length)];
+}
+
+function formatContributors(userIds) {
+  const uniqueIds = [...new Set(userIds.filter(Boolean))];
+  if (!uniqueIds.length) {
+    return "No contributors recorded.";
+  }
+  return uniqueIds.map(id => `<@${id}>`).join(", ");
+}
+
+function splitTextChunks(text, maxLength = 3800) {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks = [];
+  let remaining = text;
+
+  while (remaining.length > maxLength) {
+    let sliceIndex = remaining.lastIndexOf("\n\n", maxLength);
+    if (sliceIndex <= 0) {
+      sliceIndex = remaining.lastIndexOf("\n", maxLength);
+    }
+    if (sliceIndex <= 0) {
+      sliceIndex = remaining.lastIndexOf(" ", maxLength);
+    }
+    if (sliceIndex <= 0) {
+      sliceIndex = maxLength;
+    }
+
+    chunks.push(remaining.slice(0, sliceIndex).trim());
+    remaining = remaining.slice(sliceIndex).trim();
+  }
+
+  if (remaining.length) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
+
+// ==========================================
+// 🎮 CHANNEL GAME LOCKING HELPERS
+// ==========================================
+
+function getActiveChannelGame(guildId, channelId) {
+  const tracked = db.prepare(`
+    SELECT *
+    FROM arcade_active_games
+    WHERE guild_id = ?
+      AND channel_id = ?
+  `).get(guildId, channelId);
+
+  if (tracked) {
+    return tracked;
+  }
+
+  const legacyLastLetter = db.prepare(`
+    SELECT *
+    FROM arcade_lastletter_state
+    WHERE guild_id = ?
+      AND channel_id = ?
+  `).get(guildId, channelId);
+
+  if (legacyLastLetter) {
+    return {
+      guild_id: guildId,
+      channel_id: channelId,
+      game_type: "lastletter",
+      started_by: "",
+      state_json: "{}"
+    };
+  }
+
+  const activeStory = db.prepare(`
+    SELECT *
+    FROM arcade_story_sessions
+    WHERE guild_id = ?
+      AND channel_id = ?
+  `).get(guildId, channelId);
+
+  if (activeStory) {
+    return {
+      guild_id: guildId,
+      channel_id: channelId,
+      game_type: "story",
+      started_by: activeStory.started_by,
+      state_json: "{}"
+    };
+  }
+
+  return null;
+}
+
+function formatGameName(gameType) {
+  if (gameType === "madlibs") return "Community Madlibs";
+  if (gameType === "story") return "Continue the Story";
+  if (gameType === "lastletter") return "Last Letter";
+  return "another community game";
 }
 
 // ==========================================
@@ -815,7 +1060,7 @@ function publicWellnessEmbed(user, stats) {
 }
 
 // ==========================================
-// 🦇 ARCADE MENU + MADLIBS MODAL
+// 🦇 ARCADE MENU
 // ==========================================
 
 async function showArcade(interaction) {
@@ -823,15 +1068,14 @@ async function showArcade(interaction) {
     embeds: [
       makeEmbed(
         "🦇 The Midnight Arcade",
-        "**WORD GAMES**\n" +
-        "`/lastletter start` — Start a word chain in this channel.\n" +
-        "`/lastletter stop` — Stop the current word chain.\n" +
-        "`/madlibs` — Create a ridiculous community story.\n" +
-        "`/story` — Add a line to the community tale.\n\n" +
+        "**COMMUNITY GAMES (One game per channel at a time)**\n" +
+        "`/madlibs` — Start a 15-prompt community Madlibs story in chat (+5 pts/answer).\n" +
+        "`!story start` / `!story end` — Moderator-led community story in chat (+3 pts/line).\n" +
+        "`/lastletter start` / `/lastletter stop` — Moderator-led word chain in chat (+5 pts/word).\n\n" +
         "**COLLECTIBLES**\n" +
         "`/creatures collection` — View your companions.\n" +
         "`/creatures profile` — Inspect a creature.\n" +
-        "`/catch` — Try to catch a wild creature.\n\n" +
+        "`/catch` — Try to catch a wild creature (65% catch chance).\n\n" +
         "`/arcadeleaderboard` — See the arcade high scores.\n\n" +
         "Arcade Points are separate from Wellness Points and Owl XP.",
         COLORS.charcoal
@@ -841,46 +1085,578 @@ async function showArcade(interaction) {
   });
 }
 
-function madlibsModal() {
-  const modal = new ModalBuilder()
-    .setCustomId("hootie:madlibs")
-    .setTitle("Create a Nest Madlib");
+// ==========================================
+// 📖 1. COMMUNITY MADLIBS (CHAT-BASED, 15 PROMPTS)
+// ==========================================
 
-  const fields = [
-    ["noun", "A noun", "Example: pumpkin"],
-    ["adjective", "An adjective", "Example: suspicious"],
-    ["verb", "A verb", "Example: moonwalk"],
-    ["place", "A place", "Example: haunted library"],
-    ["exclamation", "An exclamation", "Example: THE SNACKS!"]
-  ];
+async function handleMadlibsCommand(interaction) {
+  if (!interaction.guildId) {
+    await interaction.reply({
+      content: "Community Madlibs can only be played inside a Nest server channel.",
+      ephemeral: true
+    });
+    return;
+  }
 
-  const rows = fields.map(([id, label, placeholder]) => {
-    const input = new TextInputBuilder()
-      .setCustomId(id)
-      .setLabel(label)
-      .setPlaceholder(placeholder)
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setMaxLength(60);
+  const guildId = interaction.guildId;
+  const channelId = interaction.channelId;
+  const userId = interaction.user.id;
 
-    return new ActionRowBuilder().addComponents(input);
+  const startResult = db.transaction(() => {
+    const existing = getActiveChannelGame(guildId, channelId);
+    if (existing) {
+      return { ok: false, existing };
+    }
+
+    const template = randomItem(MADLIBS_TEMPLATES);
+    const state = {
+      templateId: template.id,
+      title: template.title,
+      prompts: template.prompts,
+      answers: [],
+      contributors: [],
+      lastPlayerId: ""
+    };
+
+    db.prepare(`
+      INSERT INTO arcade_active_games (
+        guild_id,
+        channel_id,
+        game_type,
+        started_by,
+        state_json,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, 'madlibs', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(guildId, channelId, userId, JSON.stringify(state));
+
+    return { ok: true, template, state };
+  })();
+
+  if (!startResult.ok) {
+    await interaction.reply({
+      content: `🌙 **${formatGameName(startResult.existing.game_type)}** is already active in this channel! Finish or end it before starting another game.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.reply({
+    embeds: [
+      makeEmbed(
+        "📖 COMMUNITY MADLIBS HAS BEGUN!",
+        `A new tale is being woven in The Nest: **${startResult.template.title}**\n\n` +
+        `Answer each prompt directly in chat! Anyone can join in, and you can answer multiple times—just not twice in a row.\n` +
+        `✨ **+5 Arcade Points** for each accepted answer!\n\n` +
+        `**Prompt 1 of ${startResult.template.prompts.length}:** Give me **${startResult.template.prompts[0]}**!`,
+        COLORS.charcoal
+      )
+    ]
   });
-
-  modal.addComponents(...rows);
-  return modal;
 }
 
-function makeMadlib(values) {
-  return (
-    `At the edge of the Hollow, a **${values.adjective} ${values.noun}** ` +
-    `decided to **${values.verb}** inside the **${values.place}**.\n\n` +
-    `Suddenly, a tiny owl appeared and shouted, “**${values.exclamation}**”\n\n` +
-    `And that is how the legend began.`
-  );
+async function processMadlibsMessage(message) {
+  const rawInput = message.content.trim();
+  if (!rawInput || rawInput.startsWith("!") || rawInput.startsWith("/")) {
+    return;
+  }
+
+  const cleanAnswer = rawInput.replace(/\s+/g, " ").trim();
+  if (cleanAnswer.length < 1 || cleanAnswer.length > 60) {
+    return;
+  }
+
+  const guildId = message.guild.id;
+  const channelId = message.channel.id;
+  const userId = message.author.id;
+
+  const txResult = db.transaction(() => {
+    const active = db.prepare(`
+      SELECT *
+      FROM arcade_active_games
+      WHERE guild_id = ?
+        AND channel_id = ?
+        AND game_type = 'madlibs'
+    `).get(guildId, channelId);
+
+    if (!active) {
+      return { status: "inactive" };
+    }
+
+    let state;
+    try {
+      state = JSON.parse(active.state_json);
+    } catch {
+      return { status: "corrupt" };
+    }
+
+    const prompts = Array.isArray(state.prompts) ? state.prompts : [];
+    const answers = Array.isArray(state.answers) ? state.answers : [];
+    const contributors = Array.isArray(state.contributors) ? state.contributors : [];
+
+    if (answers.length >= prompts.length) {
+      return { status: "inactive" };
+    }
+
+    if (state.lastPlayerId === userId) {
+      return { status: "same_player" };
+    }
+
+    answers.push(cleanAnswer);
+    contributors.push(userId);
+    state.answers = answers;
+    state.contributors = contributors;
+    state.lastPlayerId = userId;
+
+    recordArcadeGame(
+      userId,
+      "madlibs",
+      5,
+      `Community Madlibs (${answers.length}/${prompts.length})`
+    );
+
+    if (answers.length >= prompts.length) {
+      const template =
+        MADLIBS_TEMPLATES.find(t => t.id === state.templateId) ||
+        MADLIBS_TEMPLATES[0];
+
+      const completedStory = template.build(answers);
+
+      db.prepare(`
+        INSERT INTO arcade_madlibs (
+          guild_id,
+          channel_id,
+          user_id,
+          story_text
+        )
+        VALUES (?, ?, ?, ?)
+      `).run(guildId, channelId, active.started_by || userId, completedStory);
+
+      db.prepare(`
+        DELETE FROM arcade_active_games
+        WHERE guild_id = ?
+          AND channel_id = ?
+          AND game_type = 'madlibs'
+      `).run(guildId, channelId);
+
+      return {
+        status: "completed",
+        title: template.title,
+        story: completedStory,
+        contributors,
+        acceptedAnswer: cleanAnswer
+      };
+    }
+
+    db.prepare(`
+      UPDATE arcade_active_games
+      SET state_json = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE guild_id = ?
+        AND channel_id = ?
+        AND game_type = 'madlibs'
+    `).run(JSON.stringify(state), guildId, channelId);
+
+    return {
+      status: "next_prompt",
+      acceptedAnswer: cleanAnswer,
+      stepNumber: answers.length + 1,
+      totalPrompts: prompts.length,
+      nextPrompt: prompts[answers.length]
+    };
+  })();
+
+  if (txResult.status === "inactive" || txResult.status === "corrupt") {
+    return;
+  }
+
+  if (txResult.status === "same_player") {
+    await message.reply({
+      content: "🪶 Give another night owl a turn before submitting the next Madlibs word!"
+    });
+    return;
+  }
+
+  if (txResult.status === "next_prompt") {
+    await message.reply({
+      embeds: [
+        makeEmbed(
+          "📖 WORD ACCEPTED!",
+          `**${message.author.username}** added **${txResult.acceptedAnswer}**! ✨ **+5 Arcade Points**\n\n` +
+          `**Prompt ${txResult.stepNumber} of ${txResult.totalPrompts}:** Give me **${txResult.nextPrompt}**!`,
+          COLORS.charcoal
+        )
+      ]
+    });
+    return;
+  }
+
+  if (txResult.status === "completed") {
+    await message.reply({
+      embeds: [
+        makeEmbed(
+          `📚 ${txResult.title.toUpperCase()}`,
+          `**${message.author.username}** supplied the final word (**${txResult.acceptedAnswer}**) and earned **+5 Arcade Points**!\n\n` +
+          `${txResult.story}\n\n` +
+          `**Contributors:** ${formatContributors(txResult.contributors)}`,
+          COLORS.crimson
+        )
+      ]
+    });
+  }
 }
 
 // ==========================================
-// 📝 LAST LETTER — CHAT-BASED GAME
+// 📜 2. CONTINUE THE STORY (!story start / !story end)
+// ==========================================
+
+async function handleStoryPrefixCommand(message, action) {
+  if (!message.member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await message.reply({
+      content: "Only members with **Manage Server** permission can start or end Continue the Story."
+    });
+    return;
+  }
+
+  const guildId = message.guild.id;
+  const channelId = message.channel.id;
+  const userId = message.author.id;
+
+  if (action === "start") {
+    const startResult = db.transaction(() => {
+      const existing = getActiveChannelGame(guildId, channelId);
+      if (existing) {
+        return { ok: false, existing };
+      }
+
+      const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const prompt = randomItem(STORY_PROMPTS);
+
+      db.prepare(`
+        INSERT INTO arcade_active_games (
+          guild_id,
+          channel_id,
+          game_type,
+          started_by,
+          state_json,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, 'story', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(guildId, channelId, userId, JSON.stringify({ sessionId }));
+
+      db.prepare(`
+        INSERT INTO arcade_story_sessions (
+          guild_id,
+          channel_id,
+          session_id,
+          prompt,
+          started_by,
+          last_player_id,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+          session_id = excluded.session_id,
+          prompt = excluded.prompt,
+          started_by = excluded.started_by,
+          last_player_id = '',
+          created_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(guildId, channelId, sessionId, prompt, userId);
+
+      // Record the session marker in the preserved arcade_story_contributions table
+      db.prepare(`
+        INSERT INTO arcade_story_contributions (
+          guild_id,
+          channel_id,
+          user_id,
+          contribution
+        )
+        VALUES (?, ?, ?, ?)
+      `).run(guildId, channelId, "SYSTEM_START", `[SESSION:${sessionId}] ${prompt}`);
+
+      return { ok: true, prompt };
+    })();
+
+    if (!startResult.ok) {
+      await message.reply({
+        content: `🌙 **${formatGameName(startResult.existing.game_type)}** is already active in this channel! Finish or end it before starting another game.`
+      });
+      return;
+    }
+
+    await message.channel.send({
+      embeds: [
+        makeEmbed(
+          "📜 CONTINUE THE STORY HAS BEGUN!",
+          `**Story Prompt:**\n*${startResult.prompt}*\n\n` +
+          `Type your next part of the story directly in chat (**1–500 characters**).\n` +
+          `• You can contribute multiple times, just not twice in a row.\n` +
+          `• Each accepted line earns **+3 Arcade Points**.\n` +
+          `• Moderators can end the round anytime with \`!story end\`.`,
+          COLORS.burgundy
+        )
+      ]
+    });
+    return;
+  }
+
+  if (action === "end") {
+    const endResult = db.transaction(() => {
+      const session = db.prepare(`
+        SELECT *
+        FROM arcade_story_sessions
+        WHERE guild_id = ?
+          AND channel_id = ?
+      `).get(guildId, channelId);
+
+      const active = db.prepare(`
+        SELECT *
+        FROM arcade_active_games
+        WHERE guild_id = ?
+          AND channel_id = ?
+          AND game_type = 'story'
+      `).get(guildId, channelId);
+
+      if (!session && !active) {
+        return { ok: false };
+      }
+
+      let sessionId = session?.session_id || "";
+      if (!sessionId && active?.state_json) {
+        try {
+          sessionId = JSON.parse(active.state_json).sessionId || "";
+        } catch {
+          sessionId = "";
+        }
+      }
+
+      const startMarker = sessionId
+        ? db.prepare(`
+            SELECT id, contribution
+            FROM arcade_story_contributions
+            WHERE guild_id = ?
+              AND channel_id = ?
+              AND user_id = 'SYSTEM_START'
+              AND contribution LIKE ?
+            ORDER BY id DESC
+            LIMIT 1
+          `).get(guildId, channelId, `[SESSION:${sessionId}]%`)
+        : db.prepare(`
+            SELECT id, contribution
+            FROM arcade_story_contributions
+            WHERE guild_id = ?
+              AND channel_id = ?
+              AND user_id = 'SYSTEM_START'
+            ORDER BY id DESC
+            LIMIT 1
+          `).get(guildId, channelId);
+
+      const minId = startMarker ? startMarker.id : 0;
+
+      const entries = db.prepare(`
+        SELECT id, user_id, contribution
+        FROM arcade_story_contributions
+        WHERE guild_id = ?
+          AND channel_id = ?
+          AND id > ?
+          AND user_id NOT IN ('SYSTEM_START', 'SYSTEM_END')
+        ORDER BY id ASC
+      `).all(guildId, channelId, minId);
+
+      if (sessionId) {
+        db.prepare(`
+          INSERT INTO arcade_story_contributions (
+            guild_id,
+            channel_id,
+            user_id,
+            contribution
+          )
+          VALUES (?, ?, 'SYSTEM_END', ?)
+        `).run(guildId, channelId, `[SESSION_END:${sessionId}]`);
+      }
+
+      db.prepare(`
+        DELETE FROM arcade_story_sessions
+        WHERE guild_id = ?
+          AND channel_id = ?
+      `).run(guildId, channelId);
+
+      db.prepare(`
+        DELETE FROM arcade_active_games
+        WHERE guild_id = ?
+          AND channel_id = ?
+          AND game_type = 'story'
+      `).run(guildId, channelId);
+
+      return {
+        ok: true,
+        prompt: session?.prompt || "A tale spun in The Nest",
+        entries
+      };
+    })();
+
+    if (!endResult.ok) {
+      await message.reply({
+        content: "There isn't an active **Continue the Story** game in this channel."
+      });
+      return;
+    }
+
+    if (!endResult.entries.length) {
+      await message.channel.send({
+        embeds: [
+          makeEmbed(
+            "📜 CONTINUE THE STORY ENDED",
+            `**Prompt:** *${endResult.prompt}*\n\nNo story lines were added this round.`,
+            COLORS.charcoal
+          )
+        ]
+      });
+      return;
+    }
+
+    const fullStory = endResult.entries
+      .map(entry => entry.contribution)
+      .join(" ");
+
+    const contributors = formatContributors(
+      endResult.entries.map(entry => entry.user_id)
+    );
+
+    const storyChunks = splitTextChunks(fullStory, 3500);
+
+    for (let i = 0; i < storyChunks.length; i++) {
+      const isFirst = i === 0;
+      const isLast = i === storyChunks.length - 1;
+
+      let description = "";
+      if (isFirst) {
+        description += `**Prompt:** *${endResult.prompt}*\n\n`;
+      }
+      description += storyChunks[i];
+      if (isLast) {
+        description += `\n\n**Contributors:** ${contributors}`;
+      }
+
+      await message.channel.send({
+        embeds: [
+          makeEmbed(
+            isFirst
+              ? "📚 THE COMPLETED NEST STORY"
+              : `📚 THE COMPLETED NEST STORY (Part ${i + 1})`,
+            description,
+            COLORS.crimson
+          )
+        ]
+      });
+    }
+  }
+}
+
+async function processStoryMessage(message) {
+  const contribution = message.content.trim();
+  if (!contribution || contribution.startsWith("!") || contribution.startsWith("/")) {
+    return;
+  }
+
+  const guildId = message.guild.id;
+  const channelId = message.channel.id;
+  const userId = message.author.id;
+
+  const txResult = db.transaction(() => {
+    const session = db.prepare(`
+      SELECT *
+      FROM arcade_story_sessions
+      WHERE guild_id = ?
+        AND channel_id = ?
+    `).get(guildId, channelId);
+
+    if (!session) {
+      return { status: "inactive" };
+    }
+
+    if (contribution.length < 1 || contribution.length > 500) {
+      return { status: "invalid_length", length: contribution.length };
+    }
+
+    if (session.last_player_id === userId) {
+      return { status: "same_player" };
+    }
+
+    db.prepare(`
+      INSERT INTO arcade_story_contributions (
+        guild_id,
+        channel_id,
+        user_id,
+        contribution
+      )
+      VALUES (?, ?, ?, ?)
+    `).run(guildId, channelId, userId, contribution);
+
+    db.prepare(`
+      UPDATE arcade_story_sessions
+      SET last_player_id = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE guild_id = ?
+        AND channel_id = ?
+    `).run(userId, guildId, channelId);
+
+    db.prepare(`
+      UPDATE arcade_active_games
+      SET updated_at = CURRENT_TIMESTAMP
+      WHERE guild_id = ?
+        AND channel_id = ?
+        AND game_type = 'story'
+    `).run(guildId, channelId);
+
+    recordArcadeGame(
+      userId,
+      "story",
+      3,
+      "Added to Continue the Story"
+    );
+
+    return { status: "accepted" };
+  })();
+
+  if (txResult.status === "inactive") {
+    return;
+  }
+
+  if (txResult.status === "invalid_length") {
+    await message.reply({
+      content: `📜 Your story contribution must be between **1 and 500 characters** (yours was ${txResult.length}).`
+    });
+    return;
+  }
+
+  if (txResult.status === "same_player") {
+    await message.reply({
+      content: "🪶 Give another night owl a turn before adding the next part of the story!"
+    });
+    return;
+  }
+
+  if (txResult.status === "accepted") {
+    await message.reply({
+      embeds: [
+        makeEmbed(
+          "📜 LINE ADDED TO THE STORY!",
+          `**${message.author.username}** continued the tale! ✨ **+3 Arcade Points**\n\n` +
+          `Keep going in chat, or a moderator can finish and publish the story with \`!story end\`.`,
+          COLORS.charcoal
+        )
+      ]
+    });
+  }
+}
+
+// ==========================================
+// 📝 3. LAST LETTER — CHAT-BASED GAME
 // ==========================================
 
 function getRandomStartingLetter() {
@@ -899,7 +1675,6 @@ async function handleLastLetterCommand(interaction) {
 
   const subcommand = interaction.options.getSubcommand();
 
-  // Only moderators/admins can start or stop the game.
   if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
     await interaction.reply({
       content: "Only members with Manage Server permission can start or stop Last Letter.",
@@ -910,41 +1685,67 @@ async function handleLastLetterCommand(interaction) {
 
   const guildId = interaction.guildId;
   const channelId = interaction.channelId;
+  const userId = interaction.user.id;
 
   if (subcommand === "start") {
     const startingLetter = getRandomStartingLetter();
 
-    // Reset this channel's game when a new round begins.
-    db.prepare(`
-      INSERT INTO arcade_lastletter_state (
-        guild_id,
-        channel_id,
-        current_letter,
-        last_player_id,
-        used_words,
-        round_count,
-        updated_at
-      )
-      VALUES (?, ?, ?, '', '[]', 0, CURRENT_TIMESTAMP)
-      ON CONFLICT(guild_id, channel_id) DO UPDATE SET
-        current_letter = excluded.current_letter,
-        last_player_id = '',
-        used_words = '[]',
-        round_count = 0,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(
-      guildId,
-      channelId,
-      startingLetter
-    );
+    const startResult = db.transaction(() => {
+      const existing = getActiveChannelGame(guildId, channelId);
+      if (existing) {
+        return { ok: false, existing };
+      }
+
+      db.prepare(`
+        INSERT INTO arcade_active_games (
+          guild_id,
+          channel_id,
+          game_type,
+          started_by,
+          state_json,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, 'lastletter', ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `).run(guildId, channelId, userId);
+
+      db.prepare(`
+        INSERT INTO arcade_lastletter_state (
+          guild_id,
+          channel_id,
+          current_letter,
+          last_player_id,
+          used_words,
+          round_count,
+          updated_at
+        )
+        VALUES (?, ?, ?, '', '[]', 0, CURRENT_TIMESTAMP)
+        ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+          current_letter = excluded.current_letter,
+          last_player_id = '',
+          used_words = '[]',
+          round_count = 0,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(guildId, channelId, startingLetter);
+
+      return { ok: true, startingLetter };
+    })();
+
+    if (!startResult.ok) {
+      await interaction.reply({
+        content: `🌙 **${formatGameName(startResult.existing.game_type)}** is already active in this channel! Finish or end it before starting another game.`,
+        ephemeral: true
+      });
+      return;
+    }
 
     await interaction.reply({
       embeds: [
         makeEmbed(
           "📝 LAST LETTER IS OPEN!",
           `The Nest word chain has begun!\n\n` +
-          `**Starting letter: ${startingLetter.toUpperCase()}**\n\n` +
-          `Type a word directly into this channel that starts with **${startingLetter.toUpperCase()}**.\n\n` +
+          `**Starting letter: ${startResult.startingLetter.toUpperCase()}**\n\n` +
+          `Type a word (2–30 English letters) directly into this channel that starts with **${startResult.startingLetter.toUpperCase()}**.\n\n` +
           "The next player must use the last letter of the previous word. No repeated words, and no taking two turns in a row!\n\n" +
           "**Each valid word earns +5 Arcade Points.**",
           COLORS.charcoal
@@ -956,18 +1757,39 @@ async function handleLastLetterCommand(interaction) {
   }
 
   if (subcommand === "stop") {
-    const result = db.prepare(`
-      DELETE FROM arcade_lastletter_state
-      WHERE guild_id = ?
-        AND channel_id = ?
-    `).run(guildId, channelId);
+    const stopResult = db.transaction(() => {
+      const state = db.prepare(`
+        SELECT round_count
+        FROM arcade_lastletter_state
+        WHERE guild_id = ?
+          AND channel_id = ?
+      `).get(guildId, channelId);
+
+      const deletedState = db.prepare(`
+        DELETE FROM arcade_lastletter_state
+        WHERE guild_id = ?
+          AND channel_id = ?
+      `).run(guildId, channelId);
+
+      const deletedLock = db.prepare(`
+        DELETE FROM arcade_active_games
+        WHERE guild_id = ?
+          AND channel_id = ?
+          AND game_type = 'lastletter'
+      `).run(guildId, channelId);
+
+      return {
+        stopped: deletedState.changes > 0 || deletedLock.changes > 0,
+        roundCount: state?.round_count || 0
+      };
+    })();
 
     await interaction.reply({
       embeds: [
         makeEmbed(
           "🌙 LAST LETTER HAS ENDED",
-          result.changes
-            ? "The word chain has been closed. Thanks for playing, night owls!"
+          stopResult.stopped
+            ? `The word chain has been closed after **${stopResult.roundCount}** valid words. Thanks for playing, night owls!`
             : "There isn't an active Last Letter game in this channel.",
           COLORS.burgundy
         )
@@ -978,169 +1800,240 @@ async function handleLastLetterCommand(interaction) {
   }
 }
 
+async function processLastLetterMessage(message) {
+  const rawWord = message.content.trim();
+
+  if (!/^[a-zA-Z]{2,30}$/.test(rawWord)) {
+    return;
+  }
+
+  const word = rawWord.toLowerCase();
+  const guildId = message.guild.id;
+  const channelId = message.channel.id;
+  const userId = message.author.id;
+
+  const result = db.transaction(() => {
+    const state = db.prepare(`
+      SELECT *
+      FROM arcade_lastletter_state
+      WHERE guild_id = ?
+        AND channel_id = ?
+    `).get(guildId, channelId);
+
+    if (!state) {
+      return { status: "inactive" };
+    }
+
+    let usedWords = [];
+
+    try {
+      usedWords = JSON.parse(state.used_words || "[]");
+
+      if (!Array.isArray(usedWords)) {
+        usedWords = [];
+      }
+    } catch {
+      usedWords = [];
+    }
+
+    if (usedWords.includes(word)) {
+      return {
+        status: "duplicate",
+        word
+      };
+    }
+
+    if (
+      state.current_letter &&
+      word[0] !== state.current_letter.toLowerCase()
+    ) {
+      return {
+        status: "wrong_letter",
+        requiredLetter: state.current_letter
+      };
+    }
+
+    if (state.last_player_id === userId) {
+      return {
+        status: "same_player"
+      };
+    }
+
+    usedWords.push(word);
+
+    const nextLetter = word[word.length - 1];
+
+    db.prepare(`
+      UPDATE arcade_lastletter_state
+      SET current_letter = ?,
+          last_player_id = ?,
+          used_words = ?,
+          round_count = round_count + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE guild_id = ?
+        AND channel_id = ?
+    `).run(
+      nextLetter,
+      userId,
+      JSON.stringify(usedWords),
+      guildId,
+      channelId
+    );
+
+    db.prepare(`
+      UPDATE arcade_active_games
+      SET updated_at = CURRENT_TIMESTAMP
+      WHERE guild_id = ?
+        AND channel_id = ?
+        AND game_type = 'lastletter'
+    `).run(guildId, channelId);
+
+    recordArcadeGame(
+      userId,
+      "lastletter",
+      5,
+      `Last Letter: ${word}`
+    );
+
+    return {
+      status: "accepted",
+      word,
+      nextLetter,
+      roundCount: usedWords.length
+    };
+  })();
+
+  if (result.status === "inactive") {
+    return;
+  }
+
+  if (result.status === "duplicate") {
+    await message.reply({
+      content: `🌙 **${result.word}** has already been used in this round. Try another word!`
+    });
+    return;
+  }
+
+  if (result.status === "wrong_letter") {
+    await message.reply({
+      content: `🦉 Not quite! The next word must start with **${result.requiredLetter.toUpperCase()}**.`
+    });
+    return;
+  }
+
+  if (result.status === "same_player") {
+    await message.reply({
+      content: "🪶 Give another night owl a turn before playing again!"
+    });
+    return;
+  }
+
+  if (result.status === "accepted") {
+    await message.reply({
+      embeds: [
+        makeEmbed(
+          "🔤 WORD ACCEPTED!",
+          `**${message.author.username}** played **${result.word}**!\n\n` +
+          `The next word must start with **${result.nextLetter.toUpperCase()}**.\n\n` +
+          `✨ **+5 Arcade Points**\n` +
+          `📝 Words played this round: **${result.roundCount}**`,
+          COLORS.charcoal
+        )
+      ]
+    });
+  }
+}
+
 // ==========================================
-// 📝 LAST LETTER — PLAYER CHAT MESSAGES
+// 💬 UNIFIED CHAT MESSAGE ROUTER
 // ==========================================
 
 client.on(Events.MessageCreate, async message => {
   try {
-    // Ignore DMs, bots, and webhook messages.
     if (!message.guild || message.author.bot || message.webhookId) {
       return;
     }
 
-    // Only a single word made of English letters counts as a turn.
-    // Normal sentences and regular conversation are ignored.
-    const rawWord = message.content.trim();
-
-    if (!/^[a-zA-Z]{2,30}$/.test(rawWord)) {
+    const content = (message.content || "").trim();
+    if (!content) {
       return;
     }
 
-    const word = rawWord.toLowerCase();
-
-    const guildId = message.guild.id;
-    const channelId = message.channel.id;
-    const userId = message.author.id;
-
-    const result = db.transaction(() => {
-      // Re-read the state inside the transaction.
-      // This prevents two players from claiming the same turn.
-      const state = db.prepare(`
-        SELECT *
-        FROM arcade_lastletter_state
-        WHERE guild_id = ?
-          AND channel_id = ?
-      `).get(guildId, channelId);
-
-      if (!state) {
-        return { status: "inactive" };
-      }
-
-      let usedWords = [];
-
-      try {
-        usedWords = JSON.parse(state.used_words || "[]");
-
-        if (!Array.isArray(usedWords)) {
-          usedWords = [];
-        }
-      } catch {
-        usedWords = [];
-      }
-
-      if (usedWords.includes(word)) {
-        return {
-          status: "duplicate",
-          word
-        };
-      }
-
-      if (
-        state.current_letter &&
-        word[0] !== state.current_letter.toLowerCase()
-      ) {
-        return {
-          status: "wrong_letter",
-          requiredLetter: state.current_letter
-        };
-      }
-
-      if (state.last_player_id === userId) {
-        return {
-          status: "same_player"
-        };
-      }
-
-      usedWords.push(word);
-
-      const nextLetter = word[word.length - 1];
-
-      db.prepare(`
-        UPDATE arcade_lastletter_state
-        SET current_letter = ?,
-            last_player_id = ?,
-            used_words = ?,
-            round_count = round_count + 1,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE guild_id = ?
-          AND channel_id = ?
-      `).run(
-        nextLetter,
-        userId,
-        JSON.stringify(usedWords),
-        guildId,
-        channelId
-      );
-
-      // Award points inside the same transaction as the accepted word.
-      recordArcadeGame(
-        userId,
-        "lastletter",
-        5,
-        `Last Letter: ${word}`
-      );
-
-      return {
-        status: "accepted",
-        word,
-        nextLetter,
-        roundCount: usedWords.length
-      };
-    })();
-
-    if (result.status === "inactive") {
+    // Handle !story start and !story end moderator commands
+    const lowerContent = content.toLowerCase();
+    if (lowerContent === "!story start" || lowerContent === "!story end") {
+      const action = lowerContent.endsWith("start") ? "start" : "end";
+      await handleStoryPrefixCommand(message, action);
       return;
     }
 
-    if (result.status === "duplicate") {
-      await message.reply({
-        content: `🌙 **${result.word}** has already been used in this round. Try another word!`
-      });
+    const activeGame = getActiveChannelGame(message.guild.id, message.channel.id);
+    if (!activeGame) {
       return;
     }
 
-    if (result.status === "wrong_letter") {
-      await message.reply({
-        content: `🦉 Not quite! The next word must start with **${result.requiredLetter.toUpperCase()}**.`
-      });
+    if (activeGame.game_type === "madlibs") {
+      await processMadlibsMessage(message);
       return;
     }
 
-    if (result.status === "same_player") {
-      await message.reply({
-        content: "🪶 Give another night owl a turn before playing again!"
-      });
+    if (activeGame.game_type === "story") {
+      await processStoryMessage(message);
       return;
     }
 
-    if (result.status === "accepted") {
-      await message.reply({
-        embeds: [
-          makeEmbed(
-            "🔤 WORD ACCEPTED!",
-            `**${message.author.username}** played **${result.word}**!\n\n` +
-            `The next word must start with **${result.nextLetter.toUpperCase()}**.\n\n` +
-            `✨ **+5 Arcade Points**\n` +
-            `📝 Words played this round: **${result.roundCount}**`,
-            COLORS.charcoal
-          )
-        ]
-      });
+    if (activeGame.game_type === "lastletter") {
+      await processLastLetterMessage(message);
+      return;
     }
-
   } catch (error) {
-    console.error("Last Letter message error:", error);
+    console.error("Community game message error:", error);
 
     await message.reply({
-      content: "🖤 Hootie had a little trouble processing that word. Please try again."
+      content: "🖤 Hootie had a little trouble processing that message. Please try again."
     }).catch(() => {});
   }
 });
 
 // ==========================================
-// 🐉 CREATURE SPAWNING SYSTEM
+// 🐉 CREATURE SPAWNING SYSTEM (WEIGHTED RARITY)
 // ==========================================
+
+function selectWeightedCreature(catalog) {
+  if (!catalog.length) return null;
+
+  const byRarity = new Map();
+  for (const creature of catalog) {
+    const key = (creature.rarity || "").trim();
+    if (!byRarity.has(key)) {
+      byRarity.set(key, []);
+    }
+    byRarity.get(key).push(creature);
+  }
+
+  const availableWeights = RARITY_SPAWN_WEIGHTS.filter(
+    entry => (byRarity.get(entry.rarity)?.length || 0) > 0
+  );
+
+  if (!availableWeights.length) {
+    return randomItem(catalog);
+  }
+
+  const totalWeight = availableWeights.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = Math.random() * totalWeight;
+  let chosenRarity = availableWeights[0].rarity;
+
+  for (const entry of availableWeights) {
+    if (roll < entry.weight) {
+      chosenRarity = entry.rarity;
+      break;
+    }
+    roll -= entry.weight;
+  }
+
+  const pool = byRarity.get(chosenRarity);
+  return randomItem(pool);
+}
 
 function randomSpawnDelay() {
   return Math.floor(
@@ -1222,7 +2115,7 @@ async function spawnCreature(guildId, channelId) {
     return false;
   }
 
-  const creature = randomItem(catalog);
+  const creature = selectWeightedCreature(catalog);
   const expires = new Date(now.getTime() + SPAWN_LIFETIME_MS);
 
   const result = db.prepare(`
@@ -1254,7 +2147,7 @@ async function spawnCreature(guildId, channelId) {
       `**${creature.creature_name}**\n` +
       `*${creature.rarity} ${creature.creature_type}*\n\n` +
       `${creature.description}\n\n` +
-      "Use **/catch** to try to catch it!\n" +
+      "Use **/catch** to try to catch it! (65% catch chance)\n" +
       "The first successful catch wins. You have five minutes.",
       COLORS.crimson
     );
@@ -1411,7 +2304,7 @@ async function handleCreatureCommand(interaction) {
       `🐉 ${creature.creature_name}`,
       `**Type:** ${creature.creature_type}\n` +
       `**Rarity:** ${creature.rarity}\n` +
-      `**Catch chance:** ${Math.round(Number(creature.catch_chance) * 100)}%\n` +
+      `**Catch chance:** ${Math.round(UNIVERSAL_CATCH_CHANCE * 100)}%\n` +
       `**In your collection:** ${owned ? "Yes!" : "Not yet"}\n\n` +
       creature.description,
       COLORS.charcoal
@@ -1549,7 +2442,7 @@ async function handleCreatureCommand(interaction) {
 }
 
 // ==========================================
-// 🪤 CATCH SYSTEM
+// 🪤 CATCH SYSTEM (UNIVERSAL 65% CATCH CHANCE)
 // ==========================================
 
 function attemptCatch(userId, guildId, channelId) {
@@ -1601,10 +2494,7 @@ function attemptCatch(userId, guildId, channelId) {
       return { result: "gone", spawn };
     }
 
-    const chance = Number.isFinite(Number(spawn.catch_chance))
-      ? Number(spawn.catch_chance)
-      : (CREATURE_CATCH_CHANCES[spawn.rarity] || 0.50);
-
+    const chance = UNIVERSAL_CATCH_CHANCE;
     const success = Math.random() < chance;
 
     db.prepare(`
@@ -1886,6 +2776,61 @@ async function checkJailSentences() {
 }
 
 // ==========================================
+// 🔄 RESTORE ACTIVE GAMES ON STARTUP
+// ==========================================
+
+function restoreActiveChannelGames() {
+  // Ensure any legacy active Last Letter or Story rounds are mirrored in arcade_active_games
+  const lastLetterRows = db.prepare(`
+    SELECT guild_id, channel_id
+    FROM arcade_lastletter_state
+  `).all();
+
+  for (const row of lastLetterRows) {
+    db.prepare(`
+      INSERT OR IGNORE INTO arcade_active_games (
+        guild_id,
+        channel_id,
+        game_type,
+        started_by,
+        state_json
+      )
+      VALUES (?, ?, 'lastletter', '', '{}')
+    `).run(row.guild_id, row.channel_id);
+  }
+
+  const storyRows = db.prepare(`
+    SELECT guild_id, channel_id, session_id, started_by
+    FROM arcade_story_sessions
+  `).all();
+
+  for (const row of storyRows) {
+    db.prepare(`
+      INSERT OR IGNORE INTO arcade_active_games (
+        guild_id,
+        channel_id,
+        game_type,
+        started_by,
+        state_json
+      )
+      VALUES (?, ?, 'story', ?, ?)
+    `).run(
+      row.guild_id,
+      row.channel_id,
+      row.started_by || "",
+      JSON.stringify({ sessionId: row.session_id })
+    );
+  }
+
+  const activeCount = db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM arcade_active_games
+  `).get().n;
+
+  console.log(`🎮 Restored ${activeCount} active community game(s) from SQLite`);
+}
+
+// ==========================================
 // 🦉 INTERACTION HANDLER
 // ==========================================
 
@@ -1904,54 +2849,6 @@ client.on(Events.InteractionCreate, async interaction => {
             .slice(0, 25)
             .map(zone => ({ name: zone, value: zone }))
         );
-      }
-
-      return;
-    }
-
-    if (interaction.isModalSubmit()) {
-      if (interaction.customId === "hootie:madlibs") {
-        const values = {
-          noun: interaction.fields.getTextInputValue("noun"),
-          adjective: interaction.fields.getTextInputValue("adjective"),
-          verb: interaction.fields.getTextInputValue("verb"),
-          place: interaction.fields.getTextInputValue("place"),
-          exclamation: interaction.fields.getTextInputValue("exclamation")
-        };
-
-        const story = makeMadlib(values);
-
-        db.prepare(`
-          INSERT INTO arcade_madlibs (
-            guild_id,
-            channel_id,
-            user_id,
-            story_text
-          )
-          VALUES (?, ?, ?, ?)
-        `).run(
-          interaction.guildId,
-          interaction.channelId,
-          interaction.user.id,
-          story
-        );
-
-        recordArcadeGame(
-          interaction.user.id,
-          "madlibs",
-          5,
-          "Created a community Madlib"
-        );
-
-        await interaction.reply({
-          embeds: [
-            makeEmbed(
-              "📖 A TALE FROM THE HOLLOW",
-              `${story}\n\n+5 Arcade Points`,
-              COLORS.charcoal
-            )
-          ]
-        });
       }
 
       return;
@@ -2417,67 +3314,13 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // LAST LETTER START / STOP
     if (interaction.commandName === "lastletter") {
       await handleLastLetterCommand(interaction);
       return;
     }
 
     if (interaction.commandName === "madlibs") {
-      await interaction.showModal(madlibsModal());
-      return;
-    }
-
-    if (interaction.commandName === "story") {
-      const contribution = interaction.options
-        .getString("contribution", true)
-        .trim();
-
-      if (!contribution || contribution.length > 500) {
-        await interaction.reply({
-          content: "Your story contribution must be between 1 and 500 characters.",
-          ephemeral: true
-        });
-        return;
-      }
-
-      const guildId = interaction.guildId || "dm";
-
-      db.prepare(`
-        INSERT INTO arcade_story_contributions (
-          guild_id,
-          channel_id,
-          user_id,
-          contribution
-        )
-        VALUES (?, ?, ?, ?)
-      `).run(guildId, interaction.channelId, userId, contribution);
-
-      recordArcadeGame(userId, "story", 3, "Added to the community story");
-
-      const recent = db.prepare(`
-        SELECT user_id, contribution
-        FROM arcade_story_contributions
-        WHERE guild_id = ?
-          AND channel_id = ?
-        ORDER BY id DESC
-        LIMIT 5
-      `).all(guildId, interaction.channelId).reverse();
-
-      const storyText = recent.map(row =>
-        `**<@${row.user_id}>:** ${row.contribution}`
-      ).join("\n\n");
-
-      await interaction.reply({
-        embeds: [
-          makeEmbed(
-            "📜 THE NEST'S NEVERENDING STORY",
-            `${storyText}\n\n+3 Arcade Points for adding to the tale.`,
-            COLORS.charcoal
-          )
-        ]
-      });
-
+      await handleMadlibsCommand(interaction);
       return;
     }
 
@@ -2677,6 +3520,7 @@ client.once(Events.ClientReady, async readyClient => {
     const today = localDate("America/Los_Angeles");
     ensureWeeklyChallenges(weekStart(today));
 
+    restoreActiveChannelGames();
     restoreCreatureSpawns();
 
     await checkJailSentences();
@@ -2691,6 +3535,8 @@ client.once(Events.ClientReady, async readyClient => {
 
     console.log("🪺 Wellness system ready");
     console.log("🦇 Midnight Arcade ready");
+    console.log("📖 Chat-based Community Madlibs ready");
+    console.log("📜 Chat-based Continue the Story ready");
     console.log("📝 Chat-based Last Letter ready");
     console.log("🐉 Creature spawning system ready");
     console.log("🔒 Jail sentence checker ready");
