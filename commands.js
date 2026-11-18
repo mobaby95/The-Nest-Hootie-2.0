@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require("discord.js");
 
 const commands = [
+
   // ==========================================
   // 🖤 THE NEST
   // ==========================================
@@ -37,12 +38,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName("water")
     .setDescription("Log your water intake 💧")
-    .addIntegerOption(option =>
-      option.setName("amount")
-        .setDescription("Amount in milliliters")
+    .addNumberOption(option =>
+      option.setName("cups")
+        .setDescription("Amount of water in cups")
         .setRequired(true)
-        .setMinValue(1)
-        .setMaxValue(10000)),
+        .setMinValue(0.1)
+        .setMaxValue(100)),
 
   new SlashCommandBuilder()
     .setName("steps")
@@ -93,7 +94,7 @@ const commands = [
     .setDescription("Open your personal Nest Archives 📖")
     .addUserOption(option =>
       option.setName("member")
-        .setDescription("View another member's wellness profile")
+        .setDescription("View another member's public achievements")
         .setRequired(false)),
 
   new SlashCommandBuilder()
@@ -158,26 +159,84 @@ const commands = [
         .setMaxLength(500)),
 
   new SlashCommandBuilder()
+    .setName("arcadeleaderboard")
+    .setDescription("See the top players in the Nest Arcade 🏆"),
+
+  // ==========================================
+  // 🐉 CREATURE COLLECTION & CATCHING
+  // ==========================================
+
+  new SlashCommandBuilder()
+    .setName("catch")
+    .setDescription("Try to catch a wild creature in The Nest! 🦇"),
+
+  new SlashCommandBuilder()
     .setName("creatures")
-    .setDescription("Explore your original collectible creatures 🐉")
+    .setDescription("Explore your collectible creatures 🐉")
+
     .addSubcommand(subcommand =>
       subcommand.setName("collection")
         .setDescription("View your creature collection"))
-    .addSubcommand(subcommand =>
-      subcommand.setName("discover")
-        .setDescription("Discover a new creature"))
+
     .addSubcommand(subcommand =>
       subcommand.setName("profile")
         .setDescription("View a creature's profile")
         .addStringOption(option =>
           option.setName("creature")
             .setDescription("Creature name")
-            .setRequired(true))),
+            .setRequired(true)))
+
+    .addSubcommand(subcommand =>
+      subcommand.setName("setchannel")
+        .setDescription("Choose the public creature spawn channel")
+        .addChannelOption(option =>
+          option.setName("channel")
+            .setDescription("Channel for wild creature spawns")
+            .setRequired(true)))
+
+    .addSubcommand(subcommand =>
+      subcommand.setName("start")
+        .setDescription("Start automatic creature spawning"))
+
+    .addSubcommand(subcommand =>
+      subcommand.setName("stop")
+        .setDescription("Stop automatic creature spawning"))
+
+    .addSubcommand(subcommand =>
+      subcommand.setName("spawn")
+        .setDescription("Manually spawn a creature for testing")),
+
+  // ==========================================
+  // 🔒 NEST JAIL
+  // ==========================================
 
   new SlashCommandBuilder()
-    .setName("arcadeleaderboard")
-    .setDescription("See the top players in the Nest Arcade 🏆"),
+    .setName("jail")
+    .setDescription("Send a mischievous member to Nest Jail 🦇")
+    .addUserOption(option =>
+      option.setName("member")
+        .setDescription("Member to jail")
+        .setRequired(true))
+    .addIntegerOption(option =>
+      option.setName("minutes")
+        .setDescription("Duration of the sentence in minutes")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(10080))
+    .addStringOption(option =>
+      option.setName("reason")
+        .setDescription("Reason for the sentence")
+        .setRequired(false)
+        .setMaxLength(300)),
 
-].map(command => command.toJSON());
+  new SlashCommandBuilder()
+    .setName("release")
+    .setDescription("Release a member from Nest Jail 🔓")
+    .addUserOption(option =>
+      option.setName("member")
+        .setDescription("Member to release")
+        .setRequired(true))
 
-module.exports = commands;
+];
+
+module.exports = commands.map(command => command.toJSON());
