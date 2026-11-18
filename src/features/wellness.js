@@ -1,7 +1,4 @@
-const fs = require("fs");
-const path = require("path");
 const {
-  AttachmentBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle
@@ -21,6 +18,7 @@ const {
   progressBar
 } = require("../utils/embeds");
 const { renderWellnessDashboard } = require("../../dashboardRenderer");
+const { renderMilestoneBanner } = require("../../graphicsRenderer");
 
 function addWellnessPoints(userId, amount) {
   ensureUser(userId);
@@ -426,12 +424,15 @@ async function handleWellnessCommand(interaction) {
     });
 
     if (badges.length || challenges.length) {
-      const extra = [
-        ...badges.map(badge => `🏅 **New badge:** ${badge.name}`),
-        ...challenges.map(name => `🏆 **Challenge completed:** ${name}`)
-      ].join("\n");
-
-      await interaction.followUp({ content: extra, ephemeral: isPrivate });
+      const banner = await renderMilestoneBanner({
+        user: interaction.user,
+        badges,
+        challenges
+      });
+      await interaction.followUp({
+        files: [banner.attachment],
+        ephemeral: isPrivate
+      });
     }
     return;
   }
@@ -489,13 +490,23 @@ async function handleWellnessCommand(interaction) {
     }
 
     if (minutes) message += `\n⏱️ Movement duration: **${minutes} minutes**`;
-    if (badges.length) message += `\n🏅 New badge: ${badges.map(b => b.name).join(", ")}`;
-    if (challenges.length) message += `\n🏆 Challenge completed: ${challenges.join(", ")}`;
 
     await interaction.reply({
       embeds: [makeEmbed("🌙 WELLNESS LOG UPDATED", message, COLORS.burgundy)],
       ephemeral: isPrivate
     });
+
+    if (badges.length || challenges.length) {
+      const banner = await renderMilestoneBanner({
+        user: interaction.user,
+        badges,
+        challenges
+      });
+      await interaction.followUp({
+        files: [banner.attachment],
+        ephemeral: isPrivate
+      });
+    }
     return;
   }
 
