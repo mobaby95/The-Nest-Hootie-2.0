@@ -34,8 +34,10 @@ if (!process.env.CLIENT_ID) {
 // 🖤 HOOTIE 2.0 CONFIGURATION
 // ==========================================
 
+// GuildMembers removed to avoid the disallowed privileged intent.
+// Individual members are fetched when needed for jail management.
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [GatewayIntentBits.Guilds]
 });
 
 const rest = new REST({ version: "10" })
@@ -125,10 +127,18 @@ const CHALLENGE_TEMPLATES = [
 ];
 
 const TIMEZONES = [
-  "America/Los_Angeles", "America/Denver", "America/Chicago",
-  "America/New_York", "America/Phoenix", "America/Anchorage",
-  "Pacific/Honolulu", "Europe/London", "Europe/Paris",
-  "Asia/Tokyo", "Australia/Sydney", "UTC"
+  "America/Los_Angeles",
+  "America/Denver",
+  "America/Chicago",
+  "America/New_York",
+  "America/Phoenix",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+  "Europe/London",
+  "Europe/Paris",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+  "UTC"
 ];
 
 const CREATURE_CATCH_CHANCES = {
@@ -351,12 +361,14 @@ function awardBadges(userId) {
     sleep_10: counts.sleep >= 10,
 
     selfcare_10: db.prepare(`
-      SELECT COUNT(*) AS n FROM wellness_logs
+      SELECT COUNT(*) AS n
+      FROM wellness_logs
       WHERE user_id = ? AND activity_type = 'selfcare'
     `).get(userId).n >= 10,
 
     workout_10: db.prepare(`
-      SELECT COUNT(*) AS n FROM wellness_logs
+      SELECT COUNT(*) AS n
+      FROM wellness_logs
       WHERE user_id = ? AND activity_type = 'workout'
     `).get(userId).n >= 10,
 
@@ -414,6 +426,15 @@ function ensureWeeklyChallenges(period) {
       challenge.reward
     );
   }
+
+  // Keep existing Moonwell challenges aligned with cups.
+  db.prepare(`
+    UPDATE weekly_challenges
+    SET target = 42.3,
+        description = 'Drink 42.3 cups of water this week.'
+    WHERE week_start = ?
+      AND challenge_id = 'water_week'
+  `).run(period);
 }
 
 function challengeProgress(userId, challenge, start) {
@@ -704,8 +725,7 @@ function dashboardPayload(user, stats, tab = "overview") {
   };
 }
 
-// Other members' wellness pages show achievements only.
-// They never expose detailed activity logs or private reflections.
+// Public profiles show achievements only, never private activity logs.
 function publicWellnessEmbed(user, stats) {
   const points = stats.lifetime_points || 0;
   const rank = getLevel(points);
@@ -757,7 +777,7 @@ async function showArcade(interaction) {
         COLORS.charcoal
       )
     ],
-    ephemeral: true
+    ephemeral: false
   });
 }
 
@@ -845,15 +865,22 @@ async function spawnCreature(guildId, channelId) {
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
 
-  if (!channel || !channel.isTextBased()) {
+  if (!channel || !channel.isTextBased() || !channel.send) {
     console.log(`Creature spawn channel unavailable for server ${guildId}`);
     return false;
   }
 
-  const creature = randomItem(
-    db.prepare(`SELECT * FROM creature_catalog`).all()
-  );
+  const catalog = db.prepare(`
+    SELECT *
+    FROM creature_catalog
+  `).all();
 
+  if (!catalog.length) {
+    console.error("Creature catalog is empty.");
+    return false;
+  }
+
+  const creature = randomItem(catalog);
   const now = new Date();
   const expires = new Date(now.getTime() + SPAWN_LIFETIME_MS);
 
@@ -877,43 +904,54 @@ async function spawnCreature(guildId, channelId) {
 
   const spawnId = Number(result.lastInsertRowid);
 
-  const message = await channel.send({
-    embeds: [
-      makeEmbed(
-        "🌲 A WILD CREATURE HAS APPEARED!",
-        `Something is moving in the Hollow...\n\n` +
-        `**${creature.creature_name}**\n` +
-        `*${creature.rarity} ${creature.creature_type}*\n\n` +
-        `${creature.description}\n\n` +
-        "Use **/catch** to try to catch it!\n" +
-        "The first successful catch wins. You have five minutes.",
-        COLORS.crimson
-      )
-    ]
-  });
+  try {
+    const message = await channel.send({
+      embeds: [
+        makeEmbed(
+          "🌲 A WILD CREATURE HAS APPEARED!",
+          `Something is moving in the Hollow...\n\n` +
+          `**${creature.creature_name}**\n` +
+          `*${creature.rarity} ${creature.creature_type}*\n\n` +
+          `${creature.description}\n\n` +
+          "Use **/catch** to try to catch it!\n" +
+          "The first successful catch wins. You have five minutes.",
+          COLORS.crimson
+        )
+      ]
+    });
 
-  db.prepare(`
-    UPDATE creature_spawns
-    SET message_id = ?
-    WHERE id = ?
-  `).run(message.id, spawnId);
+    db.prepare(`
+      UPDATE creature_spawns
+      SET message_id = ?
+      WHERE id = ?
+    `).run(message.id, spawnId);
 
-  setTimeout(() => {
-    const result = db.prepare(`
+    setTimeout(() => {
+      const expired = db.prepare(`
+        UPDATE creature_spawns
+        SET status = 'expired'
+        WHERE id = ?
+          AND status = 'active'
+      `).run(spawnId);
+
+      if (expired.changes) {
+        channel.send({
+          content: `🌙 **${creature.creature_name}** slipped back into the Hollow. Better luck next time!`
+        }).catch(() => {});
+      }
+    }, SPAWN_LIFETIME_MS);
+
+    return true;
+  } catch (error) {
+    db.prepare(`
       UPDATE creature_spawns
       SET status = 'expired'
       WHERE id = ?
-        AND status = 'active'
     `).run(spawnId);
 
-    if (result.changes) {
-      channel.send({
-        content: `🌙 **${creature.creature_name}** slipped back into the Hollow. Better luck next time!`
-      }).catch(() => {});
-    }
-  }, SPAWN_LIFETIME_MS);
-
-  return true;
+    console.error("Could not post creature spawn:", error);
+    return false;
+  }
 }
 
 function restoreCreatureSpawns() {
@@ -952,7 +990,8 @@ async function handleCreatureCommand(interaction) {
     `).all(userId);
 
     const total = db.prepare(`
-      SELECT COUNT(*) AS n FROM creature_catalog
+      SELECT COUNT(*) AS n
+      FROM creature_catalog
     `).get().n;
 
     const description = rows.length
@@ -1029,7 +1068,7 @@ async function handleCreatureCommand(interaction) {
     if (subcommand === "setchannel") {
       const channel = interaction.options.getChannel("channel", true);
 
-      if (!channel.isTextBased()) {
+      if (!channel.isTextBased() || !channel.send) {
         await interaction.reply({
           content: "Please choose a text channel.",
           ephemeral: true
@@ -1277,7 +1316,7 @@ async function handleJail(interaction) {
   const guild = interaction.guild;
   const target = await guild.members.fetch(targetUser.id).catch(() => null);
   const role = guild.roles.cache.get(roleId);
-  const botMember = guild.members.me;
+  const botMember = await guild.members.fetchMe().catch(() => null);
 
   if (!target || !role || !botMember) {
     await interaction.reply({
@@ -1718,28 +1757,23 @@ client.on(Events.InteractionCreate, async interaction => {
     const activityCommands = {
       water: {
         type: "water",
-        option: "cups",
-        label: "cups of water"
+        option: "cups"
       },
       steps: {
         type: "steps",
-        option: "count",
-        label: "steps"
+        option: "count"
       },
       sleep: {
         type: "sleep",
-        option: "hours",
-        label: "hours of sleep"
+        option: "hours"
       },
       selfcare: {
         type: "selfcare",
-        option: "activity",
-        label: "self-care activity"
+        option: "activity"
       },
       workout: {
         type: "workout",
-        option: "activity",
-        label: "movement session"
+        option: "activity"
       }
     };
 
@@ -1811,7 +1845,6 @@ client.on(Events.InteractionCreate, async interaction => {
         message += `\n🏆 Challenge completed: ${challenges.join(", ")}`;
       }
 
-      // Public activity announcement.
       await interaction.reply({
         embeds: [
           makeEmbed(
@@ -2333,14 +2366,11 @@ client.once(Events.ClientReady, async readyClient => {
       );
     }
 
-    // Prepare this week's challenges.
     const today = localDate("America/Los_Angeles");
     ensureWeeklyChallenges(weekStart(today));
 
-    // Expire old spawns and restart the automatic spawn scheduler.
     restoreCreatureSpawns();
 
-    // Resume jail sentence checks after a Railway restart.
     await checkJailSentences();
 
     setInterval(() => {
