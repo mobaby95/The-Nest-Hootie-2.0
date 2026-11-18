@@ -7,9 +7,10 @@ const path = require("path");
 const FONT_PATH = path.join(__dirname, "assets", "fonts", "HootieFont.ttf");
 let CARD_FONT = "sans-serif";
 if (fs.existsSync(FONT_PATH)) {
-  GlobalFonts.registerFromPath(FONT_PATH, "HootieFont");
-  CARD_FONT = "HootieFont";
-  console.log("✅ Registered HootieFont for trading cards");
+  const registeredName = GlobalFonts.registerFromPath(FONT_PATH, "HootieFont");
+  const families = GlobalFonts.families.map(f => f.family);
+  CARD_FONT = registeredName || families[0] || "HootieFont";
+  console.log("✅ Registered font:", CARD_FONT, "| Available families:", families);
 } else {
   console.warn("⚠️ assets/fonts/HootieFont.ttf not found; card text may be blank on Linux.");
 }
