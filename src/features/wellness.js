@@ -20,6 +20,7 @@ const {
   nextLevel,
   progressBar
 } = require("../utils/embeds");
+const { renderWellnessDashboard } = require("../../dashboardRenderer");
 
 function addWellnessPoints(userId, amount) {
   ensureUser(userId);
@@ -243,20 +244,6 @@ function recordActivity(userId, type, value) {
   return pointsAwarded;
 }
 
-function rankAttachment(points) {
-  const rank = getLevel(points);
-  const filePath = path.join(__dirname, "..", "..", "assets", "ranks", rank.image);
-
-  if (!fs.existsSync(filePath)) {
-    return { rank, file: null };
-  }
-
-  return {
-    rank,
-    file: new AttachmentBuilder(filePath, { name: rank.image })
-  };
-}
-
 function getStats(userId) {
   ensureUser(userId);
   const row = db.prepare(`SELECT * FROM users WHERE user_id = ?`).get(userId);
@@ -267,92 +254,6 @@ function getStats(userId) {
   `).get(userId) || { current_streak: 0, longest_streak: 0 };
 
   return { ...row, ...streak };
-}
-
-function dashboardEmbed(user, stats, tab = "overview") {
-  const points = stats.lifetime_points || 0;
-  const { rank } = rankAttachment(points);
-  const next = nextLevel(points);
-
-  let description =
-    `${rank.emoji} **${rank.name}**\n` +
-    `Lifetime Owl XP: **${points}**\n` +
-    `Weekly Wellness Points: **${stats.weekly_points || 0}**\n`;
-
-  if (next) {
-    description +=
-      `\n${progressBar(points - rank.points, next.points - rank.points)}\n` +
-      `**${next.points - points} XP** until ${next.name}`;
-  } else {
-    description += "\n👑 You have reached the highest rank.";
-  }
-
-  const e = makeEmbed(`${user.username}'s Nest Archives`, description);
-
-  if (tab === "overview") {
-    e.addFields(
-      { name: "🔥 Current Streak", value: `${stats.current_streak || 0} days`, inline: true },
-      { name: "🏆 Longest Streak", value: `${stats.longest_streak || 0} days`, inline: true },
-      { name: "🪶 Rank", value: rank.name, inline: true }
-    );
-  }
-
-  if (tab === "activities") {
-    const rows = db.prepare(`
-      SELECT activity_type, COUNT(*) AS n
-      FROM wellness_logs
-      WHERE user_id = ?
-      GROUP BY activity_type
-    `).all(user.id);
-
-    e.setDescription(
-      rows.length
-        ? rows.map(row => `**${row.activity_type}** · ${row.n} logs`).join("\n")
-        : "No activities logged yet. Your story is just beginning."
-    );
-  }
-
-  if (tab === "badges") {
-    const rows = db.prepare(`
-      SELECT badge_id
-      FROM user_badges
-      WHERE user_id = ?
-      ORDER BY earned_at DESC
-    `).all(user.id);
-
-    const names = rows.map(row =>
-      BADGES.find(badge => badge[0] === row.badge_id)?.[1] || row.badge_id
-    );
-
-    e.setDescription(
-      names.length
-        ? names.map(name => `🏅 ${name}`).join("\n")
-        : "No badges yet. Every little step counts."
-    );
-  }
-
-  if (tab === "challenges") {
-    const start = weekStart(localDate(getTimezone(user.id)));
-    ensureWeeklyChallenges(start);
-
-    const rows = db.prepare(`
-      SELECT *
-      FROM weekly_challenges
-      WHERE week_start = ?
-    `).all(start);
-
-    e.setDescription(rows.map(challenge => {
-      const progress = challengeProgress(user.id, challenge, start);
-      return (
-        `${progress >= challenge.target ? "✅" : "🌙"} **${challenge.title}**\n` +
-        `${progressBar(progress, challenge.target)} ` +
-        `${Math.min(progress, challenge.target)}/${challenge.target} · ` +
-        `+${challenge.reward_points} points`
-      );
-    }).join("\n\n"));
-  }
-
-  return e;
 }
 
 function dashboardButtons(targetUserId, activeTab = "overview") {
@@ -376,18 +277,57 @@ function dashboardButtons(targetUserId, activeTab = "overview") {
   );
 }
 
-function dashboardPayload(user, stats, tab = "overview") {
-  const { rank, file } = rankAttachment(stats.lifetime_points || 0);
-  const e = dashboardEmbed(user, stats, tab);
+async function dashboardPayload(user, stats, tab = "overview") {
+  const points = stats.lifetime_points || 0;
+  const rank = getLevel(points);
+  const next = nextLevel(points);
 
-  if (file) {
-    e.setThumbnail(`attachment://${rank.image}`);
-  }
+  const activities = db.prepare(`
+    SELECT activity_type, COUNT(*) AS n
+    FROM wellness_logs
+    WHERE user_id = ?
+    GROUP BY activity_type
+  `).all(user.id);
+
+  const badgeRows = db.prepare(`
+    SELECT badge_id
+    FROM user_badges
+    WHERE user_id = ?
+    ORDER BY earned_at DESC
+  `).all(user.id);
+
+  const badges = badgeRows.map(row =>
+    BADGES.find(badge => badge[0] === row.badge_id)?.[1] || row.badge_id
+  );
+
+  const start = weekStart(localDate(getTimezone(user.id)));
+  ensureWeeklyChallenges(start);
+  const challengeRows = db.prepare(`
+    SELECT *
+    FROM weekly_challenges
+    WHERE week_start = ?
+  `).all(start);
+
+  const challenges = challengeRows.map(ch => ({
+    ...ch,
+    progress: challengeProgress(user.id, ch, start)
+  }));
+
+  const { attachment } = await renderWellnessDashboard({
+    user,
+    stats,
+    rank,
+    next,
+    tab,
+    activities,
+    badges,
+    challenges
+  });
 
   return {
-    embeds: [e],
+    embeds: [],
     components: [dashboardButtons(user.id, tab)],
-    ...(file ? { files: [file] } : {})
+    files: [attachment]
   };
 }
 
@@ -398,8 +338,9 @@ async function handleWellnessCommand(interaction) {
   if (subcommand === "dashboard") {
     const member = interaction.options.getUser("member") || interaction.user;
     const stats = getStats(member.id);
+    const payload = await dashboardPayload(member, stats);
     await interaction.reply({
-      ...dashboardPayload(member, stats),
+      ...payload,
       ephemeral: true
     });
     return;
