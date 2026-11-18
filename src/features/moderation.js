@@ -2,6 +2,7 @@ const { PermissionFlagsBits } = require("discord.js");
 const db = require("../../database");
 const { COLORS } = require("../config/constants");
 const { makeEmbed } = require("../utils/embeds");
+const { renderJailMugshot } = require("../../graphicsRenderer");
 
 const jailTimers = new Map();
 
@@ -168,6 +169,8 @@ async function handleJailCommand(interaction, client) {
       return;
     }
 
+    await interaction.deferReply();
+
     const jailedAt = new Date();
     const releaseAt = new Date(jailedAt.getTime() + minutes * 60 * 1000);
     const releaseAtIso = releaseAt.toISOString();
@@ -187,13 +190,22 @@ async function handleJailCommand(interaction, client) {
 
     scheduleJailRelease(client, guild.id, target.id, releaseAtIso);
 
+    const releaseUnix = Math.floor(releaseAt.getTime() / 1000);
+    const mugshot = await renderJailMugshot({
+      targetUser,
+      moderatorUser: interaction.user,
+      minutes,
+      reason,
+      releaseUnix
+    });
+
     const jailEmbed = makeEmbed(
       "🔒 WELCOME TO NEST JAIL",
       `${target} has been sent to Nest Jail for **${minutes} minute(s)**.\n\n` +
       `**Reason:** ${reason}\n` +
-      `**Release:** <t:${Math.floor(releaseAt.getTime() / 1000)}:R>`,
+      `**Release:** <t:${releaseUnix}:R>`,
       COLORS.crimson
-    );
+    ).setImage(`attachment://${mugshot.fileName}`);
 
     const jChanId = jailChannelId();
     if (jChanId) {
@@ -201,11 +213,18 @@ async function handleJailCommand(interaction, client) {
         || await guild.channels.fetch(jChanId).catch(() => null);
 
       if (jailChan && jailChan.isTextBased()) {
-        await jailChan.send({ content: `${target}`, embeds: [jailEmbed] }).catch(() => {});
+        await jailChan.send({
+          content: `${target}`,
+          embeds: [jailEmbed],
+          files: [mugshot.attachment]
+        }).catch(() => {});
       }
     }
 
-    await interaction.reply({ embeds: [jailEmbed] });
+    await interaction.editReply({
+      embeds: [jailEmbed],
+      files: [mugshot.attachment]
+    });
     return;
   }
 
