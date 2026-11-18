@@ -171,22 +171,78 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName("creatures")
-    .setDescription("View your Hollow creature collection or manage spawns")
+    .setDescription("Collect, trade, and track Hollow creatures")
     .addSubcommand(subcommand =>
       subcommand
-        .setName("collection")
-        .setDescription("View the creatures you have caught")
+        .setName("inventory")
+        .setDescription("View your stacked creature inventory")
+        .addUserOption(option =>
+          option
+            .setName("member")
+            .setDescription("View another member's creature inventory")
+            .setRequired(false)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("catalog")
+        .setDescription("View the full 12-creature Hollow catalog and your progress")
     )
     .addSubcommand(subcommand =>
       subcommand
         .setName("profile")
-        .setDescription("Inspect a creature from the Hollow catalog")
+        .setDescription("Render a trading card profile for any creature")
         .addStringOption(option =>
           option
             .setName("creature")
             .setDescription("Creature name or ID")
             .setRequired(true)
+            .setAutocomplete(true)
         )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("daily")
+        .setDescription("Claim your free daily Hollow creature card")
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("gift")
+        .setDescription("Gift a creature from your inventory to another member")
+        .addUserOption(option =>
+          option
+            .setName("member")
+            .setDescription("Member receiving the creature")
+            .setRequired(true)
+        )
+        .addStringOption(option =>
+          option
+            .setName("creature")
+            .setDescription("Creature name or ID to gift")
+            .setRequired(true)
+            .setAutocomplete(true)
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("leaderboard")
+        .setDescription("View the Hollow creature leaderboards")
+        .addStringOption(option =>
+          option
+            .setName("type")
+            .setDescription("Ranking category")
+            .setRequired(false)
+            .addChoices(
+              { name: "Total Creatures Caught", value: "total" },
+              { name: "Unique Species Collected", value: "unique" },
+              { name: "Fastest Catch Time", value: "fastest" }
+            )
+        )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName("achievements")
+        .setDescription("View your creature catching achievements")
     )
     .addSubcommand(subcommand =>
       subcommand
@@ -215,10 +271,6 @@ const commands = [
         .setName("spawn")
         .setDescription("Manually spawn a wild creature now")
     ),
-
-  new SlashCommandBuilder()
-    .setName("catch")
-    .setDescription("Try to catch an active wild creature in this channel"),
 
   new SlashCommandBuilder()
     .setName("arcadeleaderboard")
