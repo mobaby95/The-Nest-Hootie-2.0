@@ -326,7 +326,6 @@ db.exec(`
     UNIQUE(user_id, creature_id)
   );
 
-  -- One configured spawn channel per server.
   CREATE TABLE IF NOT EXISTS creature_spawn_channels (
     guild_id TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL,
@@ -334,7 +333,6 @@ db.exec(`
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Persist active spawns so they survive Railway restarts.
   CREATE TABLE IF NOT EXISTS creature_spawns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id TEXT NOT NULL,
@@ -348,7 +346,6 @@ db.exec(`
     message_id TEXT
   );
 
-  -- Each member gets only one attempt per spawn.
   CREATE TABLE IF NOT EXISTS creature_spawn_attempts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     spawn_id INTEGER NOT NULL,
@@ -365,9 +362,19 @@ db.exec(`
   ON creature_spawn_attempts(spawn_id);
 `);
 
+// Existing databases get this column safely.
+ensureColumn(
+  "creature_catalog",
+  "catch_chance",
+  "REAL NOT NULL DEFAULT 0.50"
+);
+
 // ==========================================
-// 🐉 ORIGINAL CREATURE CATALOG
+// 🐉 HOOTIE 2.0 CREATURE CATALOG
 // ==========================================
+
+// Catch chance is stored as a decimal:
+// 0.80 = 80%, 0.10 = 10%, 0.02 = 2%.
 
 const creatures = [
   {
@@ -375,81 +382,132 @@ const creatures = [
     name: "Gloomlet",
     type: "Shadow",
     rarity: "Common",
-    description: "A tiny shadow creature that loves moonlit corners."
+    description: "A tiny shadow-dweller with curious eyes and a soft midnight glow.",
+    catchChance: 0.80
   },
   {
     id: "cindercrow",
     name: "Cindercrow",
     type: "Fire",
     rarity: "Common",
-    description: "A mischievous little bird with glowing ember feathers."
+    description: "A soot-feathered crow with a warm ember tucked beneath one wing.",
+    catchChance: 0.80
   },
   {
     id: "moonmoth",
     name: "Moonmoth",
     type: "Moon",
     rarity: "Common",
-    description: "A gentle creature drawn to silver moonlight."
+    description: "A gentle moth whose wings shimmer like moonlit silk.",
+    catchChance: 0.80
   },
   {
     id: "thornkit",
     name: "Thornkit",
     type: "Nature",
-    rarity: "Uncommon",
-    description: "A curious forest creature with tiny thorn-covered paws."
+    rarity: "Common",
+    description: "A mischievous woodland kitten with tiny leafy thorns.",
+    catchChance: 0.80
   },
   {
     id: "duskwisp",
     name: "Duskwisp",
     type: "Spirit",
     rarity: "Uncommon",
-    description: "A floating spirit that appears just before midnight."
+    description: "A floating wisp that leaves a trail of violet sparks.",
+    catchChance: 0.65
   },
   {
     id: "hollowhare",
     name: "Hollowhare",
     type: "Shadow",
-    rarity: "Rare",
-    description: "A mysterious rabbit that guards forgotten forest paths."
+    rarity: "Uncommon",
+    description: "A quiet hare that appears only where the forest grows dark.",
+    catchChance: 0.65
   },
   {
     id: "vesperwing",
     name: "Vesperwing",
     type: "Moon",
+    rarity: "Uncommon",
+    description: "A graceful night creature with silver-tipped wings.",
+    catchChance: 0.65
+  },
+  {
+    id: "mycelune",
+    name: "Mycelune",
+    type: "Nature",
+    rarity: "Uncommon",
+    description: "A small forest guardian crowned with glowing mushrooms.",
+    catchChance: 0.65
+  },
+  {
+    id: "belladusk",
+    name: "Belladusk",
+    type: "Shadow",
     rarity: "Rare",
-    description: "An elegant winged creature that follows the evening stars."
+    description: "A mysterious fox with dusk-colored fur and luminous markings.",
+    catchChance: 0.45
+  },
+  {
+    id: "astralith",
+    name: "Astralith",
+    type: "Starlight",
+    rarity: "Ultra Rare",
+    description: "A celestial crystal dragon-deer said to carry fragments of the night sky.",
+    catchChance: 0.25
   },
   {
     id: "nocturne",
     name: "Nocturne",
     type: "Spirit",
     rarity: "Legendary",
-    description: "An ancient guardian said to awaken beneath a crimson moon."
+    description: "An ancient spirit companion whose song echoes through the Hollow.",
+    catchChance: 0.10
+  },
+  {
+    id: "diva",
+    name: "Diva",
+    type: "Moon",
+    rarity: "Mythic",
+    description: "A beloved black-and-white Cockapoo with a moonlit aura and a heart of pure mischief.",
+    catchChance: 0.02
   }
 ];
 
-const insertCreature = db.prepare(`
-  INSERT OR IGNORE INTO creature_catalog (
+const upsertCreature = db.prepare(`
+  INSERT INTO creature_catalog (
     creature_id,
     creature_name,
     creature_type,
     rarity,
-    description
+    description,
+    catch_chance
   )
   VALUES (
     @id,
     @name,
     @type,
     @rarity,
-    @description
+    @description,
+    @catchChance
   )
+  ON CONFLICT(creature_id) DO UPDATE SET
+    creature_name = excluded.creature_name,
+    creature_type = excluded.creature_type,
+    rarity = excluded.rarity,
+    description = excluded.description,
+    catch_chance = excluded.catch_chance
 `);
 
 db.transaction(() => {
   for (const creature of creatures) {
-    insertCreature.run(creature);
+    upsertCreature.run(creature);
   }
 })();
+
+console.log("🐉 Creature catalog updated: 12 creatures ready.");
+console.log("🌙 Diva is Mythic with a 2% catch chance.");
 
 // ==========================================
 // 🔒 MODERATION
