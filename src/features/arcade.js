@@ -14,6 +14,7 @@ const {
   formatContributors,
   splitTextChunks
 } = require("../utils/embeds");
+const { renderArcadeDashboard } = require("../../dashboardRenderer");
 
 function addArcadePoints(userId, amount, reason) {
   ensureUser(userId);
@@ -76,10 +77,23 @@ function getUserRank(rows, targetUserId) {
   return index >= 0 ? `#${index + 1}` : "Unranked";
 }
 
-function buildArcadeDashboardPayload(targetUser, tab = "overview") {
+async function resolveDisplayNames(client, rows) {
+  const enriched = [];
+  for (const r of rows.slice(0, 6)) {
+    let displayName = `Owl ${r.user_id.slice(-4)}`;
+    try {
+      const fetched = client?.users?.cache?.get(r.user_id) || (await client?.users?.fetch(r.user_id));
+      if (fetched) displayName = fetched.username;
+    } catch {
+      // Fallback to short ID if user cannot be fetched
+    }
+    enriched.push({ ...r, displayName });
+  }
+  return enriched;
+}
+
+async function buildArcadeDashboardPayload(targetUser, tab = "overview") {
   ensureUser(targetUser.id);
-  const logo = getLogoAttachment();
-  const files = logo ? [logo] : [];
 
   const totalPoints = db.prepare(`SELECT points FROM arcade_points WHERE user_id = ?`).get(targetUser.id)?.points || 0;
   const gameCounts = db.prepare(`
@@ -90,46 +104,28 @@ function buildArcadeDashboardPayload(targetUser, tab = "overview") {
   `).all(targetUser.id);
 
   const countMap = new Map(gameCounts.map(r => [r.game_name, r]));
-  const llStats = countMap.get("lastletter") || { plays: 0, pts: 0 };
-  const mlStats = countMap.get("madlibs") || { plays: 0, pts: 0 };
-  const stStats = countMap.get("story") || { plays: 0, pts: 0 };
-  const ccStats = countMap.get("creature_catch") || { plays: 0, pts: 0 };
+  const statsMap = {
+    lastletter: countMap.get("lastletter") || { plays: 0, pts: 0 },
+    madlibs: countMap.get("madlibs") || { plays: 0, pts: 0 },
+    story: countMap.get("story") || { plays: 0, pts: 0 },
+    creature_catch: countMap.get("creature_catch") || { plays: 0, pts: 0 }
+  };
 
-  let embed;
+  const overallRows = db.prepare(`
+    SELECT user_id, points AS score FROM arcade_points WHERE points > 0 ORDER BY score DESC
+  `).all();
+  const overallRank = getUserRank(overallRows, targetUser.id);
 
-  if (tab === "overview") {
-    const overallRows = db.prepare(`
-      SELECT user_id, points AS score FROM arcade_points WHERE points > 0 ORDER BY score DESC
-    `).all();
-    const myRank = getUserRank(overallRows, targetUser.id);
+  let myTabRank = overallRank;
+  let leaderboardRows = [];
 
-    embed = makeEmbed(
-      `🦇 ${targetUser.username}'s Midnight Arcade Dashboard`,
-      `Total Arcade Points: **${totalPoints}** • Overall Rank: **${myRank}**\n\n` +
-      `Use the buttons below to inspect individual game leaderboards and overall Arcade rankings.`,
-      COLORS.charcoal
-    ).addFields(
-      { name: "📝 Last Letter", value: `${llStats.plays} words (${llStats.pts} pts)`, inline: true },
-      { name: "📖 Madlibs", value: `${mlStats.plays} words (${mlStats.pts} pts)`, inline: true },
-      { name: "📜 Story Lines", value: `${stStats.plays} lines (${stStats.pts} pts)`, inline: true },
-      { name: "🐉 Wild Catches", value: `${ccStats.plays} catches (${ccStats.pts} pts)`, inline: true }
-    );
-  } else if (tab === "overall") {
-    const rows = db.prepare(`
-      SELECT user_id, points AS score FROM arcade_points WHERE points > 0 ORDER BY score DESC
-    `).all();
-    const myRank = getUserRank(rows, targetUser.id);
-    const top10 = rows.slice(0, 10);
-
-    const lines = top10.length
-      ? top10.map((r, i) => `**${i + 1}.** <@${r.user_id}> — **${r.score} Arcade Points**`).join("\n")
-      : "No Arcade Points earned yet!";
-
-    embed = makeEmbed(
-      "🏆 MIDNIGHT ARCADE — OVERALL LEADERBOARD",
-      `${lines}\n\n**${targetUser.username}'s Rank:** ${myRank} (${totalPoints} pts)`,
-      COLORS.charcoal
-    );
+  if (tab === "overall") {
+    const resolved = await resolveDisplayNames(targetUser.client, overallRows);
+    leaderboardRows = resolved.map(r => ({
+      user_id: r.user_id,
+      displayName: r.displayName,
+      statLabel: `${r.score} PTS`
+    }));
   } else if (tab === "lastletter") {
     const rows = db.prepare(`
       SELECT user_id, COUNT(*) AS plays, COALESCE(SUM(score), 0) AS pts
@@ -138,18 +134,13 @@ function buildArcadeDashboardPayload(targetUser, tab = "overview") {
       GROUP BY user_id
       ORDER BY plays DESC, pts DESC
     `).all();
-    const myRank = getUserRank(rows, targetUser.id);
-    const top10 = rows.slice(0, 10);
-
-    const lines = top10.length
-      ? top10.map((r, i) => `**${i + 1}.** <@${r.user_id}> — **${r.plays} ${r.plays === 1 ? "word" : "words"}** *(${r.pts} pts)*`).join("\n")
-      : "No Last Letter words played yet!";
-
-    embed = makeEmbed(
-      "📝 LAST LETTER — GAME LEADERBOARD",
-      `${lines}\n\n**${targetUser.username}'s Rank:** ${myRank} (${llStats.plays} words)`,
-      COLORS.charcoal
-    );
+    myTabRank = getUserRank(rows, targetUser.id);
+    const resolved = await resolveDisplayNames(targetUser.client, rows);
+    leaderboardRows = resolved.map(r => ({
+      user_id: r.user_id,
+      displayName: r.displayName,
+      statLabel: `${r.plays} WORDS (${r.pts} PTS)`
+    }));
   } else if (tab === "madlibs") {
     const rows = db.prepare(`
       SELECT user_id, COUNT(*) AS plays, COALESCE(SUM(score), 0) AS pts
@@ -158,19 +149,14 @@ function buildArcadeDashboardPayload(targetUser, tab = "overview") {
       GROUP BY user_id
       ORDER BY plays DESC, pts DESC
     `).all();
-    const myRank = getUserRank(rows, targetUser.id);
-    const top10 = rows.slice(0, 10);
-
-    const lines = top10.length
-      ? top10.map((r, i) => `**${i + 1}.** <@${r.user_id}> — **${r.plays} ${r.plays === 1 ? "word" : "words"}** *(${r.pts} pts)*`).join("\n")
-      : "No Madlibs words submitted yet!";
-
-    embed = makeEmbed(
-      "📖 COMMUNITY MADLIBS — GAME LEADERBOARD",
-      `${lines}\n\n**${targetUser.username}'s Rank:** ${myRank} (${mlStats.plays} words)`,
-      COLORS.charcoal
-    );
-  } else {
+    myTabRank = getUserRank(rows, targetUser.id);
+    const resolved = await resolveDisplayNames(targetUser.client, rows);
+    leaderboardRows = resolved.map(r => ({
+      user_id: r.user_id,
+      displayName: r.displayName,
+      statLabel: `${r.plays} WORDS (${r.pts} PTS)`
+    }));
+  } else if (tab === "story") {
     const rows = db.prepare(`
       SELECT user_id, COUNT(*) AS plays, COALESCE(SUM(score), 0) AS pts
       FROM arcade_game_stats
@@ -178,21 +164,24 @@ function buildArcadeDashboardPayload(targetUser, tab = "overview") {
       GROUP BY user_id
       ORDER BY plays DESC, pts DESC
     `).all();
-    const myRank = getUserRank(rows, targetUser.id);
-    const top10 = rows.slice(0, 10);
-
-    const lines = top10.length
-      ? top10.map((r, i) => `**${i + 1}.** <@${r.user_id}> — **${r.plays} ${r.plays === 1 ? "line" : "lines"}** *(${r.pts} pts)*`).join("\n")
-      : "No story lines added yet!";
-
-    embed = makeEmbed(
-      "📜 CONTINUE THE STORY — GAME LEADERBOARD",
-      `${lines}\n\n**${targetUser.username}'s Rank:** ${myRank} (${stStats.plays} lines)`,
-      COLORS.charcoal
-    );
+    myTabRank = getUserRank(rows, targetUser.id);
+    const resolved = await resolveDisplayNames(targetUser.client, rows);
+    leaderboardRows = resolved.map(r => ({
+      user_id: r.user_id,
+      displayName: r.displayName,
+      statLabel: `${r.plays} LINES (${r.pts} PTS)`
+    }));
   }
 
-  if (logo) embed.setThumbnail("attachment://hootie-logo.jpg");
+  const { attachment } = await renderArcadeDashboard({
+    user: targetUser,
+    tab,
+    totalPoints,
+    overallRank,
+    statsMap,
+    leaderboardRows,
+    myTabRank
+  });
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -220,7 +209,7 @@ function buildArcadeDashboardPayload(targetUser, tab = "overview") {
       .setStyle(tab === "story" ? ButtonStyle.Primary : ButtonStyle.Secondary)
   );
 
-  return { embeds: [embed], components: [row1, row2], files };
+  return { embeds: [], components: [row1, row2], files: [attachment] };
 }
 
 async function showArcadeMenu(interaction) {
@@ -789,8 +778,9 @@ async function handleArcadeCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
   if (subcommand === "dashboard") {
     const member = interaction.options.getUser("member") || interaction.user;
+    const payload = await buildArcadeDashboardPayload(member, "overview");
     await interaction.reply({
-      ...buildArcadeDashboardPayload(member, "overview"),
+      ...payload,
       ephemeral: true
     });
     return;
