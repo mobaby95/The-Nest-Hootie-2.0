@@ -62,9 +62,24 @@ function findCreatureAsset(creatureId) {
   return null;
 }
 
-async function drawCircularAvatar(ctx, url, cx, cy, radius, ringColor = "#9F7AEA") {
+async function fetchImageSafe(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
   try {
-    const img = await loadImage(url);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return await loadImage(buf);
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
+async function drawCircularAvatar(ctx, url, cx, cy, radius, ringColor = "#9F7AEA") {
+  const img = await fetchImageSafe(url);
+  if (img) {
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -72,7 +87,7 @@ async function drawCircularAvatar(ctx, url, cx, cy, radius, ringColor = "#9F7AEA
     ctx.clip();
     ctx.drawImage(img, cx - radius, cy - radius, radius * 2, radius * 2);
     ctx.restore();
-  } catch {
+  } else {
     ctx.fillStyle = "#2D3748";
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -112,7 +127,6 @@ async function renderCreatureBinder({ user, catalog, ownedMap, mode = "catalog" 
 
   drawFrame(ctx, width, height, "#9F7AEA", "#4A2545");
 
-  // Header
   roundRect(ctx, 26, 24, width - 52, 68, 12);
   ctx.fillStyle = "#211930";
   ctx.fill();
@@ -148,7 +162,6 @@ async function renderCreatureBinder({ user, catalog, ownedMap, mode = "catalog" 
     72
   );
 
-  // Completion bar pill on right
   const pct = Math.round((uniqueCount / Math.max(1, catalog.length)) * 100);
   roundRect(ctx, width - 146, 40, 104, 36, 18);
   ctx.fillStyle = "#6B46C1";
@@ -159,7 +172,6 @@ async function renderCreatureBinder({ user, catalog, ownedMap, mode = "catalog" 
   ctx.fillText(`${pct}% FULL`, width - 94, 58);
   ctx.textAlign = "left";
 
-  // 4 columns x 3 rows grid (12 creatures)
   const cols = 4;
   const gap = 14;
   const cardW = (width - 52 - gap * (cols - 1)) / cols;
@@ -197,7 +209,6 @@ async function renderCreatureBinder({ user, catalog, ownedMap, mode = "catalog" 
         }
       }
 
-      // Count badge top-right
       roundRect(ctx, x + cardW - 46, y + 10, 36, 22, 11);
       ctx.fillStyle = "#2D2442";
       ctx.fill();
@@ -249,7 +260,6 @@ async function renderLeaderboardPodium({ title, subtitle, entries }) {
 
   drawFrame(ctx, width, height, "#D69E2E", "#553C9A");
 
-  // Title header
   roundRect(ctx, 26, 22, width - 52, 58, 12);
   ctx.fillStyle = "#1E1A2E";
   ctx.fill();
@@ -264,7 +274,6 @@ async function renderLeaderboardPodium({ title, subtitle, entries }) {
   ctx.fillText(subtitle, width - 44, 51);
   ctx.textAlign = "left";
 
-  // Top 3 Podium Cards
   const podiumConfig = [
     { idx: 1, label: "#2 SILVER", color: "#CBD5E0", x: 26, y: 112, h: 146 },
     { idx: 0, label: "#1 GOLD", color: "#F6E05E", x: 282, y: 94, h: 164 },
@@ -303,7 +312,6 @@ async function renderLeaderboardPodium({ title, subtitle, entries }) {
     ctx.textAlign = "left";
   }
 
-  // Rows #4 to #10
   roundRect(ctx, 26, 274, width - 52, 222, 12);
   ctx.fillStyle = "#181524";
   ctx.fill();
@@ -402,7 +410,6 @@ async function renderStorybookCover({ modeLabel, title, contributors = [] }) {
 
   drawFrame(ctx, width, height, "#C53030", "#2D3748");
 
-  // Decorative inner parchment border
   roundRect(ctx, 24, 22, width - 48, height - 44, 14);
   ctx.fillStyle = "#1E1722";
   ctx.fill();
@@ -421,7 +428,6 @@ async function renderStorybookCover({ modeLabel, title, contributors = [] }) {
   ctx.font = `bold 26px ${GFX_FONT}`;
   ctx.fillText(title.slice(0, 44), width / 2, 84);
 
-  // Contributor avatars row
   const uniqueAvatars = contributors.slice(0, 8);
   if (uniqueAvatars.length) {
     const spacing = 46;
@@ -444,9 +450,9 @@ async function renderStorybookCover({ modeLabel, title, contributors = [] }) {
 }
 
 // ==========================================
-// 5. HOLLOW DETENTION MUGSHOT CARD (800 x 360)
+// 5A. PUBLIC JAIL MUGSHOT CARD (800 x 360)
 // ==========================================
-async function renderJailMugshot({ targetUser, moderatorUser, minutes, reason, releaseUnix }) {
+async function renderJailMugshot({ targetUser, moderatorUser, minutes, reason }) {
   const width = 800;
   const height = 360;
   const canvas = createCanvas(width, height);
@@ -454,14 +460,13 @@ async function renderJailMugshot({ targetUser, moderatorUser, minutes, reason, r
 
   drawFrame(ctx, width, height, "#E53E3E", "#1A202C");
 
-  // Top Red Detention Banner
   roundRect(ctx, 26, 24, width - 52, 54, 10);
   ctx.fillStyle = "#742A2A";
   ctx.fill();
   ctx.textBaseline = "middle";
   ctx.fillStyle = "#FFFFFF";
-  ctx.font = `bold 22px ${GFX_FONT}`;
-  ctx.fillText("HOLLOW DETENTION  •  NEST JAIL RECORD", 44, 51);
+  ctx.font = `bold 21px ${GFX_FONT}`;
+  ctx.fillText("HOLLOW DETENTION  •  LOCKED IN THE COOP", 44, 51);
 
   ctx.textAlign = "right";
   ctx.fillStyle = "#FEB2B2";
@@ -469,7 +474,6 @@ async function renderJailMugshot({ targetUser, moderatorUser, minutes, reason, r
   ctx.fillText(`CASE #${targetUser.id.slice(-5)}`, width - 44, 51);
   ctx.textAlign = "left";
 
-  // Mugshot frame on left
   const mugX = 36;
   const mugY = 98;
   const mugSize = 210;
@@ -477,21 +481,18 @@ async function renderJailMugshot({ targetUser, moderatorUser, minutes, reason, r
   ctx.fillStyle = "#2D3748";
   ctx.fill();
 
-  try {
-    const avatar = await loadImage(targetUser.displayAvatarURL({ extension: "png", size: 256 }));
+  const avatar = await fetchImageSafe(targetUser.displayAvatarURL({ extension: "png", size: 256 }));
+  if (avatar) {
     ctx.save();
     roundRect(ctx, mugX, mugY, mugSize, mugSize, 12);
     ctx.clip();
     ctx.drawImage(avatar, mugX, mugY, mugSize, mugSize);
 
-    // Draw iron prison bars over the mugshot
     ctx.fillStyle = "rgba(15, 15, 20, 0.78)";
     for (let bx = mugX + 26; bx < mugX + mugSize; bx += 38) {
       ctx.fillRect(bx, mugY, 10, mugSize);
     }
     ctx.restore();
-  } catch {
-    // Fallback if avatar fails
   }
 
   ctx.lineWidth = 3;
@@ -499,7 +500,6 @@ async function renderJailMugshot({ targetUser, moderatorUser, minutes, reason, r
   roundRect(ctx, mugX, mugY, mugSize, mugSize, 12);
   ctx.stroke();
 
-  // Details panel on right
   const infoX = 270;
   roundRect(ctx, infoX, 98, width - infoX - 28, 210, 12);
   ctx.fillStyle = "#1C1926";
@@ -514,23 +514,129 @@ async function renderJailMugshot({ targetUser, moderatorUser, minutes, reason, r
 
   ctx.fillStyle = "#A0AEC0";
   ctx.font = `bold 12px ${GFX_FONT}`;
-  ctx.fillText("SENTENCE DURATION", infoX + 20, 182);
+  ctx.fillText("TIME OUT DURATION", infoX + 20, 182);
   ctx.fillStyle = "#FEB2B2";
   ctx.font = `bold 18px ${GFX_FONT}`;
   ctx.fillText(`${minutes} MINUTE${minutes === 1 ? "" : "S"}`, infoX + 20, 204);
 
   ctx.fillStyle = "#A0AEC0";
   ctx.font = `bold 12px ${GFX_FONT}`;
-  ctx.fillText("REASON FOR DETENTION", infoX + 20, 238);
+  ctx.fillText("OFFENSE / REASON", infoX + 20, 238);
   ctx.fillStyle = "#EDF2F7";
   ctx.font = `15px ${GFX_FONT}`;
   ctx.fillText(reason.slice(0, 52), infoX + 20, 260);
 
   ctx.fillStyle = "#718096";
   ctx.font = `13px ${GFX_FONT}`;
-  ctx.fillText(`ISSUED BY: ${moderatorUser.username.toUpperCase()}`, infoX + 20, 290);
+  ctx.fillText(`ESCAPED FROM: ${moderatorUser.username.toUpperCase()}'S PATIENCE`, infoX + 20, 290);
 
   const fileName = `nest-jail-${targetUser.id}.png`;
+  return {
+    attachment: new AttachmentBuilder(canvas.toBuffer("image/png"), { name: fileName }),
+    fileName
+  };
+}
+
+// ==========================================
+// 5B. SILLY NAUGHTY NEST WELCOME GRAPHIC (800 x 360)
+// ==========================================
+async function renderNaughtyNestWelcome({ targetUser, minutes, reason }) {
+  const width = 800;
+  const height = 360;
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext("2d");
+
+  drawFrame(ctx, width, height, "#F6AD55", "#B83280");
+
+  // Playful Party / Timeout Header
+  roundRect(ctx, 26, 24, width - 52, 58, 12);
+  ctx.fillStyle = "#321933";
+  ctx.fill();
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#F6E05E";
+  ctx.font = `bold 23px ${GFX_FONT}`;
+  ctx.fillText("WELCOME TO THE NAUGHTY NEST!", width / 2, 53);
+  ctx.textAlign = "left";
+
+  // Silly Birdcage Avatar Frame on Left
+  const cageX = 48;
+  const cageY = 104;
+  const cageW = 190;
+  const cageH = 216;
+
+  // Dome top of birdcage
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cageX + cageW / 2, cageY + 75, 75, Math.PI, 0);
+  ctx.lineTo(cageX + cageW - 20, cageY + cageH - 12);
+  ctx.lineTo(cageX + 20, cageY + cageH - 12);
+  ctx.closePath();
+  ctx.fillStyle = "#24182E";
+  ctx.fill();
+  ctx.clip();
+
+  const avatar = await fetchImageSafe(targetUser.displayAvatarURL({ extension: "png", size: 256 }));
+  if (avatar) {
+    ctx.drawImage(avatar, cageX + 20, cageY + 12, cageW - 40, cageH - 24);
+  }
+
+  // Golden birdcage bars
+  ctx.fillStyle = "rgba(246, 224, 94, 0.78)";
+  for (let bx = cageX + 36; bx < cageX + cageW - 24; bx += 28) {
+    ctx.fillRect(bx, cageY, 5, cageH);
+  }
+  ctx.fillRect(cageX + 20, cageY + 105, cageW - 40, 5);
+  ctx.restore();
+
+  // Cage outline & perch ring at top
+  ctx.beginPath();
+  ctx.arc(cageX + cageW / 2, cageY - 4, 10, 0, Math.PI * 2);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#F6E05E";
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cageX + cageW / 2, cageY + 75, 75, Math.PI, 0);
+  ctx.lineTo(cageX + cageW - 20, cageY + cageH - 12);
+  ctx.lineTo(cageX + 20, cageY + cageH - 12);
+  ctx.closePath();
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = "#F6E05E";
+  ctx.stroke();
+
+  // Silly Welcome Card on Right
+  const boxX = 264;
+  roundRect(ctx, boxX, 104, width - boxX - 28, 216, 14);
+  ctx.fillStyle = "#20172B";
+  ctx.fill();
+
+  ctx.fillStyle = "#FBB6CE";
+  ctx.font = `bold 13px ${GFX_FONT}`;
+  ctx.fillText("NEWEST BIRDBRAIN IN RESIDENCE", boxX + 20, 128);
+
+  ctx.fillStyle = "#FFFFFF";
+  ctx.font = `bold 24px ${GFX_FONT}`;
+  ctx.fillText(targetUser.username, boxX + 20, 156);
+
+  ctx.fillStyle = "#EDF2F7";
+  ctx.font = `15px ${GFX_FONT}`;
+  ctx.fillText("Grab a seed cup and think about what you did.", boxX + 20, 190);
+  ctx.fillText("Hootie is watching from the rafters!", boxX + 20, 212);
+
+  roundRect(ctx, boxX + 20, 236, width - boxX - 68, 66, 10);
+  ctx.fillStyle = "#2D1E3D";
+  ctx.fill();
+
+  ctx.fillStyle = "#F6E05E";
+  ctx.font = `bold 14px ${GFX_FONT}`;
+  ctx.fillText(`SENTENCE: ${minutes} MINUTE${minutes === 1 ? "" : "S"} IN THE COOP`, boxX + 34, 258);
+
+  ctx.fillStyle = "#CBD5E0";
+  ctx.font = `13px ${GFX_FONT}`;
+  ctx.fillText(`REASON: ${reason.slice(0, 48)}`, boxX + 34, 282);
+
+  const fileName = `naughty-nest-welcome-${targetUser.id}.png`;
   return {
     attachment: new AttachmentBuilder(canvas.toBuffer("image/png"), { name: fileName }),
     fileName
@@ -542,5 +648,6 @@ module.exports = {
   renderLeaderboardPodium,
   renderMilestoneBanner,
   renderStorybookCover,
-  renderJailMugshot
+  renderJailMugshot,
+  renderNaughtyNestWelcome
 };
