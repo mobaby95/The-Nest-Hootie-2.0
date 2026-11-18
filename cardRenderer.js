@@ -3,16 +3,34 @@ const { AttachmentBuilder } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
 
-// Register bundled font for Linux/Railway environments
-const FONT_PATH = path.join(__dirname, "assets", "fonts", "HootieFont.ttf");
+// Register valid font from @fontsource/roboto for Linux/Railway
+const ROBOTO_REGULAR = path.join(
+  __dirname,
+  "node_modules",
+  "@fontsource",
+  "roboto",
+  "files",
+  "roboto-latin-400-normal.woff2"
+);
+const ROBOTO_BOLD = path.join(
+  __dirname,
+  "node_modules",
+  "@fontsource",
+  "roboto",
+  "files",
+  "roboto-latin-700-normal.woff2"
+);
+
 let CARD_FONT = "sans-serif";
-if (fs.existsSync(FONT_PATH)) {
-  const registeredName = GlobalFonts.registerFromPath(FONT_PATH, "HootieFont");
-  const families = GlobalFonts.families.map(f => f.family);
-  CARD_FONT = registeredName || families[0] || "HootieFont";
-  console.log("✅ Registered font:", CARD_FONT, "| Available families:", families);
+if (fs.existsSync(ROBOTO_REGULAR)) {
+  GlobalFonts.registerFromPath(ROBOTO_REGULAR, "Roboto");
+  if (fs.existsSync(ROBOTO_BOLD)) {
+    GlobalFonts.registerFromPath(ROBOTO_BOLD, "Roboto");
+  }
+  CARD_FONT = "Roboto";
+  console.log("✅ Registered Roboto | Available families:", GlobalFonts.families.map(f => f.family));
 } else {
-  console.warn("⚠️ assets/fonts/HootieFont.ttf not found; card text may be blank on Linux.");
+  console.warn("⚠️ Roboto font file not found.");
 }
 
 const RARITY_THEMES = {
