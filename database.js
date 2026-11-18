@@ -2,42 +2,24 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const fs = require("fs");
 
-// ==========================================
-// 🖤 DATABASE CONNECTION
-// ==========================================
-
-const databasePath =
-  process.env.DATABASE_PATH || "./data/hootie.sqlite";
-
-fs.mkdirSync(path.dirname(databasePath), {
-  recursive: true
-});
+const databasePath = process.env.DATABASE_PATH || "./data/hootie.sqlite";
+fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 
 const db = new Database(databasePath);
-
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 db.pragma("busy_timeout = 5000");
 
-// ==========================================
-// 🔧 SAFE MIGRATION HELPERS
-// ==========================================
-
 function hasColumn(table, column) {
-  return db.pragma(`table_info(${table})`)
-    .some(item => item.name === column);
+  return db.pragma(`table_info(${table})`).some(item => item.name === column);
 }
 
 function ensureColumn(table, column, definition) {
   if (!hasColumn(table, column)) {
-    db.exec(
-      `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`
-    );
-
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     console.log(`🛠️ Added ${table}.${column}`);
     return true;
   }
-
   return false;
 }
 
@@ -91,122 +73,25 @@ db.exec(`
   );
 `);
 
-const addedLifetimePoints = ensureColumn(
-  "users",
-  "lifetime_points",
-  "INTEGER NOT NULL DEFAULT 0"
-);
-
+const addedLifetimePoints = ensureColumn("users", "lifetime_points", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("users", "weekly_points", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("users", "weekly_period", "TEXT");
 ensureColumn("users", "level", "INTEGER NOT NULL DEFAULT 0");
 
 if (addedLifetimePoints) {
-  db.exec(`
-    UPDATE users
-    SET lifetime_points = COALESCE(wellness_points, 0)
-  `);
+  db.exec(`UPDATE users SET lifetime_points = COALESCE(wellness_points, 0)`);
 }
 
 ensureColumn("wellness_logs", "activity_date", "TEXT");
-ensureColumn(
-  "wellness_logs",
-  "points_awarded",
-  "INTEGER NOT NULL DEFAULT 0"
-);
-
+ensureColumn("wellness_logs", "points_awarded", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("wellness_checkins", "timezone_used", "TEXT");
-ensureColumn(
-  "wellness_checkins",
-  "reward_earned",
-  "INTEGER NOT NULL DEFAULT 0"
-);
+ensureColumn("wellness_checkins", "reward_earned", "INTEGER NOT NULL DEFAULT 0");
 
 db.exec(`
-  UPDATE wellness_logs
-  SET activity_date = substr(created_at, 1, 10)
-  WHERE activity_date IS NULL;
-
-  CREATE INDEX IF NOT EXISTS idx_wellness_logs_user_date
-  ON wellness_logs(user_id, activity_date, activity_type);
-
-  CREATE INDEX IF NOT EXISTS idx_wellness_checkins_user_date
-  ON wellness_checkins(user_id, checkin_date);
-`);
-
-// ==========================================
-// 🔄 LEGACY CHECK-IN MIGRATION
-// ==========================================
-
-const checkinsSchema = db.prepare(`
-  SELECT sql
-  FROM sqlite_master
-  WHERE type = 'table'
-    AND name = 'wellness_checkins'
-`).get();
-
-if (
-  checkinsSchema?.sql &&
-  checkinsSchema.sql
-    .replace(/\s+/g, "")
-    .toUpperCase()
-    .includes("UNIQUE(USER_ID,CHECKIN_DATE)")
-) {
-  const oldColumns = db
-    .pragma("table_info(wellness_checkins)")
-    .map(column => column.name);
-
-  const hasTimezone = oldColumns.includes("timezone_used");
-  const hasReward = oldColumns.includes("reward_earned");
-
-  db.transaction(() => {
-    db.exec(`
-      CREATE TABLE wellness_checkins_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT NOT NULL,
-        response TEXT NOT NULL,
-        visibility TEXT NOT NULL,
-        checkin_date TEXT NOT NULL,
-        timezone_used TEXT,
-        reward_earned INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      );
-
-      INSERT INTO wellness_checkins_new (
-        id,
-        user_id,
-        response,
-        visibility,
-        checkin_date,
-        timezone_used,
-        reward_earned,
-        created_at
-      )
-      SELECT
-        id,
-        user_id,
-        response,
-        visibility,
-        checkin_date,
-        ${hasTimezone ? "timezone_used" : "NULL"},
-        ${hasReward ? "reward_earned" : "1"},
-        created_at
-      FROM wellness_checkins;
-
-      DROP TABLE wellness_checkins;
-
-      ALTER TABLE wellness_checkins_new
-      RENAME TO wellness_checkins;
-    `);
-  })();
-
-  console.log("🛠️ Legacy check-in table migrated.");
-}
-
-db.exec(`
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_wellness_daily_reward
-  ON wellness_checkins(user_id, checkin_date)
-  WHERE reward_earned = 1;
+  UPDATE wellness_logs SET activity_date = substr(created_at, 1, 10) WHERE activity_date IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_wellness_logs_user_date ON wellness_logs(user_id, activity_date, activity_type);
+  CREATE INDEX IF NOT EXISTS idx_wellness_checkins_user_date ON wellness_checkins(user_id, checkin_date);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_wellness_daily_reward ON wellness_checkins(user_id, checkin_date) WHERE reward_earned = 1;
 `);
 
 // ==========================================
@@ -299,8 +184,6 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Saves active community games across bot restarts.
-  -- One active game per server/channel.
   CREATE TABLE IF NOT EXISTS arcade_community_games (
     guild_id TEXT NOT NULL,
     channel_id TEXT NOT NULL,
@@ -311,22 +194,8 @@ db.exec(`
   );
 `);
 
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_arcade_transactions_user
-  ON arcade_transactions(user_id);
-
-  CREATE INDEX IF NOT EXISTS idx_arcade_stats_user
-  ON arcade_game_stats(user_id);
-
-  CREATE INDEX IF NOT EXISTS idx_arcade_stats_game
-  ON arcade_game_stats(game_name);
-
-  CREATE INDEX IF NOT EXISTS idx_arcade_story_channel
-  ON arcade_story_contributions(guild_id, channel_id);
-`);
-
 // ==========================================
-// 🐉 CREATURE COLLECTION
+// 🐉 CREATURE COLLECTION (CAT BOT STYLE)
 // ==========================================
 
 db.exec(`
@@ -335,7 +204,8 @@ db.exec(`
     creature_name TEXT NOT NULL,
     creature_type TEXT NOT NULL,
     rarity TEXT NOT NULL,
-    description TEXT NOT NULL
+    description TEXT NOT NULL,
+    catch_chance REAL NOT NULL DEFAULT 1.0
   );
 
   CREATE TABLE IF NOT EXISTS user_creatures (
@@ -343,6 +213,8 @@ db.exec(`
     user_id TEXT NOT NULL,
     creature_id TEXT NOT NULL,
     nickname TEXT,
+    count INTEGER NOT NULL DEFAULT 1,
+    fastest_catch_ms INTEGER,
     discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, creature_id)
   );
@@ -364,37 +236,32 @@ db.exec(`
     expires_at TEXT NOT NULL,
     caught_by TEXT,
     caught_at TEXT,
+    catch_time_ms INTEGER,
     message_id TEXT
   );
 
-  CREATE TABLE IF NOT EXISTS creature_spawn_attempts (
+  CREATE TABLE IF NOT EXISTS creature_achievements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    spawn_id INTEGER NOT NULL,
     user_id TEXT NOT NULL,
-    success INTEGER NOT NULL DEFAULT 0,
-    attempted_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(spawn_id, user_id)
+    achievement_id TEXT NOT NULL,
+    earned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, achievement_id)
   );
 
-  CREATE INDEX IF NOT EXISTS idx_creature_spawns_status
-  ON creature_spawns(status, expires_at);
+  CREATE TABLE IF NOT EXISTS creature_daily_claims (
+    user_id TEXT PRIMARY KEY,
+    last_claim_date TEXT NOT NULL
+  );
 
-  CREATE INDEX IF NOT EXISTS idx_creature_attempts_spawn
-  ON creature_spawn_attempts(spawn_id);
+  CREATE TABLE IF NOT EXISTS creature_gifts_sent (
+    user_id TEXT PRIMARY KEY,
+    gifts_count INTEGER NOT NULL DEFAULT 0
+  );
 `);
 
-ensureColumn(
-  "creature_catalog",
-  "catch_chance",
-  "REAL NOT NULL DEFAULT 0.65"
-);
-
-// ==========================================
-// 🐉 HOOTIE 2.0 CREATURE CATALOG
-// ==========================================
-
-// Every creature has a 65% catch chance.
-// Rarity affects spawn frequency, not catch difficulty.
+ensureColumn("user_creatures", "count", "INTEGER NOT NULL DEFAULT 1");
+ensureColumn("user_creatures", "fastest_catch_ms", "INTEGER");
+ensureColumn("creature_spawns", "catch_time_ms", "INTEGER");
 
 const creatures = [
   {
@@ -484,28 +351,13 @@ const creatures = [
 ];
 
 const upsertCreature = db.prepare(`
-  INSERT INTO creature_catalog (
-    creature_id,
-    creature_name,
-    creature_type,
-    rarity,
-    description,
-    catch_chance
-  )
-  VALUES (
-    @id,
-    @name,
-    @type,
-    @rarity,
-    @description,
-    0.65
-  )
+  INSERT INTO creature_catalog (creature_id, creature_name, creature_type, rarity, description, catch_chance)
+  VALUES (@id, @name, @type, @rarity, @description, 1.0)
   ON CONFLICT(creature_id) DO UPDATE SET
     creature_name = excluded.creature_name,
     creature_type = excluded.creature_type,
     rarity = excluded.rarity,
-    description = excluded.description,
-    catch_chance = 0.65
+    description = excluded.description
 `);
 
 db.transaction(() => {
@@ -513,9 +365,6 @@ db.transaction(() => {
     upsertCreature.run(creature);
   }
 })();
-
-console.log("🐉 Creature catalog updated: 12 creatures ready.");
-console.log("🎯 All creatures have a 65% catch chance.");
 
 // ==========================================
 // 🔒 MODERATION
@@ -531,36 +380,11 @@ db.exec(`
     release_at TEXT NOT NULL
   );
 
-  CREATE INDEX IF NOT EXISTS idx_jail_release_at
-  ON jail_sentences(release_at);
+  CREATE INDEX IF NOT EXISTS idx_jail_release_at ON jail_sentences(release_at);
+  CREATE INDEX IF NOT EXISTS idx_user_creatures_user ON user_creatures(user_id);
+  CREATE INDEX IF NOT EXISTS idx_creature_spawns_status ON creature_spawns(status, expires_at);
 `);
 
-// ==========================================
-// 📊 PERFORMANCE INDEXES
-// ==========================================
-
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_user_creatures_user
-  ON user_creatures(user_id);
-
-  CREATE INDEX IF NOT EXISTS idx_badges_user
-  ON user_badges(user_id);
-
-  CREATE INDEX IF NOT EXISTS idx_challenges_week
-  ON weekly_challenges(week_start);
-`);
-
-// ==========================================
-// 🖤 CONNECTION CONFIRMATION
-// ==========================================
-
-console.log("🖤 HOOTIE DATABASE CONNECTED");
-console.log("Database location: " + databasePath);
-console.log("🪺 Wellness database ready");
-console.log("🏅 Badges and challenges ready");
-console.log("🦇 Arcade database ready");
-console.log("🐉 Creature collection and spawn database ready");
-console.log("🔒 Jail database ready");
-console.log("🎮 Community game persistence ready");
+console.log("🖤 HOOTIE DATABASE CONNECTED (Cat Bot Creature Edition)");
 
 module.exports = db;
