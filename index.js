@@ -34,8 +34,6 @@ if (!process.env.CLIENT_ID) {
 // 🖤 HOOTIE 2.0 CONFIGURATION
 // ==========================================
 
-// GuildMembers removed to avoid the disallowed privileged intent.
-// Individual members are fetched when needed for jail management.
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
@@ -141,11 +139,14 @@ const TIMEZONES = [
   "UTC"
 ];
 
+// Catch rates by rarity.
+// Legendary creatures are the hardest to catch.
 const CREATURE_CATCH_CHANCES = {
   Common: 80,
   Uncommon: 65,
   Rare: 45,
-  Legendary: 25
+  "Ultra Rare": 25,
+  Legendary: 10
 };
 
 const SPAWN_MIN_MS = 20 * 60 * 1000;
@@ -252,12 +253,33 @@ function nextLevel(points) {
 }
 
 function progressBar(current, target, size = 12) {
+  if (!target || target <= 0) {
+    return "▰".repeat(size);
+  }
+
   const filled = Math.max(
     0,
     Math.min(size, Math.floor((current / target) * size))
   );
 
   return "▰".repeat(filled) + "▱".repeat(size - filled);
+}
+
+function creatureImage(creatureId) {
+  const filePath = path.join(
+    __dirname,
+    "assets",
+    "creatures",
+    `${creatureId}.png`
+  );
+
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  return new AttachmentBuilder(filePath, {
+    name: `${creatureId}.png`
+  });
 }
 
 // ==========================================
@@ -427,7 +449,6 @@ function ensureWeeklyChallenges(period) {
     );
   }
 
-  // Keep existing Moonwell challenges aligned with cups.
   db.prepare(`
     UPDATE weekly_challenges
     SET target = 42.3,
@@ -510,16 +531,38 @@ function evaluateChallenges(userId) {
 function recordActivity(userId, type, value) {
   const date = localDate(getTimezone(userId));
 
-  const already = db.prepare(`
-    SELECT 1
-    FROM wellness_logs
-    WHERE user_id = ?
-      AND activity_type = ?
-      AND activity_date = ?
-    LIMIT 1
-  `).get(userId, type, date);
+  let pointsAwarded = 0;
 
-  const pointsAwarded = already ? 0 : 5;
+  if (type === "water") {
+    // 2 points per cup, with a maximum of 20 water points per day.
+    const earnedToday = db.prepare(`
+      SELECT COALESCE(SUM(points_awarded), 0) AS total
+      FROM wellness_logs
+      WHERE user_id = ?
+        AND activity_type = 'water'
+        AND activity_date = ?
+    `).get(userId, date).total;
+
+    const remainingPoints = Math.max(0, 20 - earnedToday);
+    const requestedPoints = Math.floor(Number(value) * 2 * 100) / 100;
+
+    pointsAwarded = Math.min(
+      requestedPoints,
+      remainingPoints
+    );
+  } else {
+    // Other wellness activities earn 5 points once per day.
+    const already = db.prepare(`
+      SELECT 1
+      FROM wellness_logs
+      WHERE user_id = ?
+        AND activity_type = ?
+        AND activity_date = ?
+      LIMIT 1
+    `).get(userId, type, date);
+
+    pointsAwarded = already ? 0 : 5;
+  }
 
   db.prepare(`
     INSERT INTO wellness_logs (
@@ -530,9 +573,15 @@ function recordActivity(userId, type, value) {
       points_awarded
     )
     VALUES (?, ?, ?, ?, ?)
-  `).run(userId, type, String(value), date, pointsAwarded);
+  `).run(
+    userId,
+    type,
+    String(value),
+    date,
+    pointsAwarded
+  );
 
-  if (pointsAwarded) {
+  if (pointsAwarded > 0) {
     addWellnessPoints(userId, pointsAwarded);
   }
 
@@ -725,7 +774,7 @@ function dashboardPayload(user, stats, tab = "overview") {
   };
 }
 
-// Public profiles show achievements only, never private activity logs.
+// Public profiles show achievements, not private activity logs.
 function publicWellnessEmbed(user, stats) {
   const points = stats.lifetime_points || 0;
   const rank = getLevel(points);
@@ -745,6 +794,7 @@ function publicWellnessEmbed(user, stats) {
     `🪺 ${user.username}'s Public Nest Profile`,
     `${rank.emoji} **${rank.name}**\n` +
     `Lifetime Owl XP: **${points}**\n` +
+    `Weekly Wellness Points: **${stats.weekly_points || 0}**\n` +
     `🔥 Current streak: **${stats.current_streak || 0} days**\n` +
     `🏆 Longest streak: **${stats.longest_streak || 0} days**\n\n` +
     `**Achievements**\n` +
@@ -851,7 +901,30 @@ function scheduleNextSpawn() {
   }, randomSpawnDelay());
 }
 
+async function expireCreatureSpawn(spawnId, channelId, creatureName, delay) {
+  setTimeout(async () => {
+    const expired = db.prepare(`
+      UPDATE creature_spawns
+      SET status = 'expired'
+      WHERE id = ?
+        AND status = 'active'
+    `).run(spawnId);
+
+    if (expired.changes) {
+      const channel = await client.channels.fetch(channelId).catch(() => null);
+
+      if (channel?.isTextBased()) {
+        await channel.send({
+          content: `🌙 **${creatureName}** slipped back into the Hollow. Better luck next time!`
+        }).catch(() => {});
+      }
+    }
+  }, Math.max(0, delay));
+}
+
 async function spawnCreature(guildId, channelId) {
+  const now = new Date();
+
   const active = db.prepare(`
     SELECT id
     FROM creature_spawns
@@ -859,7 +932,7 @@ async function spawnCreature(guildId, channelId) {
       AND status = 'active'
       AND expires_at > ?
     LIMIT 1
-  `).get(guildId, new Date().toISOString());
+  `).get(guildId, now.toISOString());
 
   if (active) return false;
 
@@ -881,7 +954,6 @@ async function spawnCreature(guildId, channelId) {
   }
 
   const creature = randomItem(catalog);
-  const now = new Date();
   const expires = new Date(now.getTime() + SPAWN_LIFETIME_MS);
 
   const result = db.prepare(`
@@ -905,19 +977,26 @@ async function spawnCreature(guildId, channelId) {
   const spawnId = Number(result.lastInsertRowid);
 
   try {
+    const image = creatureImage(creature.creature_id);
+
+    const embed = makeEmbed(
+      "🌲 A WILD CREATURE HAS APPEARED!",
+      `Something is moving in the Hollow...\n\n` +
+      `**${creature.creature_name}**\n` +
+      `*${creature.rarity} ${creature.creature_type}*\n\n` +
+      `${creature.description}\n\n` +
+      "Use **/catch** to try to catch it!\n" +
+      "The first successful catch wins. You have five minutes.",
+      COLORS.crimson
+    );
+
+    if (image) {
+      embed.setImage(`attachment://${creature.creature_id}.png`);
+    }
+
     const message = await channel.send({
-      embeds: [
-        makeEmbed(
-          "🌲 A WILD CREATURE HAS APPEARED!",
-          `Something is moving in the Hollow...\n\n` +
-          `**${creature.creature_name}**\n` +
-          `*${creature.rarity} ${creature.creature_type}*\n\n` +
-          `${creature.description}\n\n` +
-          "Use **/catch** to try to catch it!\n" +
-          "The first successful catch wins. You have five minutes.",
-          COLORS.crimson
-        )
-      ]
+      embeds: [embed],
+      ...(image ? { files: [image] } : {})
     });
 
     db.prepare(`
@@ -926,20 +1005,12 @@ async function spawnCreature(guildId, channelId) {
       WHERE id = ?
     `).run(message.id, spawnId);
 
-    setTimeout(() => {
-      const expired = db.prepare(`
-        UPDATE creature_spawns
-        SET status = 'expired'
-        WHERE id = ?
-          AND status = 'active'
-      `).run(spawnId);
-
-      if (expired.changes) {
-        channel.send({
-          content: `🌙 **${creature.creature_name}** slipped back into the Hollow. Better luck next time!`
-        }).catch(() => {});
-      }
-    }, SPAWN_LIFETIME_MS);
+    expireCreatureSpawn(
+      spawnId,
+      channelId,
+      creature.creature_name,
+      SPAWN_LIFETIME_MS
+    );
 
     return true;
   } catch (error) {
@@ -964,8 +1035,31 @@ function restoreCreatureSpawns() {
       AND expires_at <= ?
   `).run(now);
 
+  const activeSpawns = db.prepare(`
+    SELECT s.id, s.channel_id, s.expires_at, c.creature_name
+    FROM creature_spawns s
+    JOIN creature_catalog c ON c.creature_id = s.creature_id
+    WHERE s.status = 'active'
+      AND s.expires_at > ?
+  `).all(now);
+
+  for (const spawn of activeSpawns) {
+    const remaining = new Date(spawn.expires_at).getTime() - Date.now();
+
+    expireCreatureSpawn(
+      spawn.id,
+      spawn.channel_id,
+      spawn.creature_name,
+      remaining
+    );
+  }
+
   scheduleNextSpawn();
 }
+
+// ==========================================
+// 🐉 CREATURE COMMANDS
+// ==========================================
 
 async function handleCreatureCommand(interaction) {
   const subcommand = interaction.options.getSubcommand();
@@ -982,9 +1076,10 @@ async function handleCreatureCommand(interaction) {
       ORDER BY
         CASE c.rarity
           WHEN 'Legendary' THEN 1
-          WHEN 'Rare' THEN 2
-          WHEN 'Uncommon' THEN 3
-          ELSE 4
+          WHEN 'Ultra Rare' THEN 2
+          WHEN 'Rare' THEN 3
+          WHEN 'Uncommon' THEN 4
+          ELSE 5
         END,
         c.creature_name
     `).all(userId);
@@ -1039,17 +1134,24 @@ async function handleCreatureCommand(interaction) {
         AND creature_id = ?
     `).get(userId, creature.creature_id);
 
+    const image = creatureImage(creature.creature_id);
+
+    const embed = makeEmbed(
+      `🐉 ${creature.creature_name}`,
+      `**Type:** ${creature.creature_type}\n` +
+      `**Rarity:** ${creature.rarity}\n` +
+      `**In your collection:** ${owned ? "Yes!" : "Not yet"}\n\n` +
+      creature.description,
+      COLORS.charcoal
+    );
+
+    if (image) {
+      embed.setImage(`attachment://${creature.creature_id}.png`);
+    }
+
     await interaction.reply({
-      embeds: [
-        makeEmbed(
-          `🐉 ${creature.creature_name}`,
-          `**Type:** ${creature.creature_type}\n` +
-          `**Rarity:** ${creature.rarity}\n` +
-          `**In your collection:** ${owned ? "Yes!" : "Not yet"}\n\n` +
-          creature.description,
-          COLORS.charcoal
-        )
-      ],
+      embeds: [embed],
+      ...(image ? { files: [image] } : {}),
       ephemeral: true
     });
 
@@ -1755,26 +1857,11 @@ client.on(Events.InteractionCreate, async interaction => {
     // ======================================
 
     const activityCommands = {
-      water: {
-        type: "water",
-        option: "cups"
-      },
-      steps: {
-        type: "steps",
-        option: "count"
-      },
-      sleep: {
-        type: "sleep",
-        option: "hours"
-      },
-      selfcare: {
-        type: "selfcare",
-        option: "activity"
-      },
-      workout: {
-        type: "workout",
-        option: "activity"
-      }
+      water: { type: "water", option: "cups" },
+      steps: { type: "steps", option: "count" },
+      sleep: { type: "sleep", option: "hours" },
+      selfcare: { type: "selfcare", option: "activity" },
+      workout: { type: "workout", option: "activity" }
     };
 
     if (activityCommands[interaction.commandName]) {
@@ -1833,6 +1920,18 @@ client.on(Events.InteractionCreate, async interaction => {
         `🦉 <@${userId}> logged **${shown}**!\n` +
         `+${pointsAwarded} Wellness Points`;
 
+      if (config.type === "water") {
+        const earnedToday = db.prepare(`
+          SELECT COALESCE(SUM(points_awarded), 0) AS total
+          FROM wellness_logs
+          WHERE user_id = ?
+            AND activity_type = 'water'
+            AND activity_date = ?
+        `).get(userId, localDate(getTimezone(userId))).total;
+
+        message += `\n💧 Daily water points: **${earnedToday}/20**`;
+      }
+
       if (minutes) {
         message += `\n⏱️ Movement duration: **${minutes} minutes**`;
       }
@@ -1885,11 +1984,34 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     // ======================================
-    // 🏆 WELLNESS LEADERBOARD
+    // 🏆 LEADERBOARDS
     // ======================================
 
     if (interaction.commandName === "leaderboard") {
       const ranking = interaction.options.getString("ranking", true);
+
+      if (ranking === "arcade") {
+        const rows = db.prepare(`
+          SELECT user_id, points AS score
+          FROM arcade_points
+          ORDER BY score DESC
+          LIMIT 10
+        `).all();
+
+        const lines = rows.length
+          ? rows.map((row, index) =>
+              `**${index + 1}.** <@${row.user_id}> — **${row.score} Arcade Points**`
+            ).join("\n")
+          : "No arcade scores yet. Be the first to play!";
+
+        await interaction.reply({
+          embeds: [
+            makeEmbed("🦇 MIDNIGHT ARCADE LEADERBOARD", lines, COLORS.charcoal)
+          ]
+        });
+
+        return;
+      }
 
       const period = ranking === "weekly"
         ? "weekly_points"
@@ -2270,6 +2392,7 @@ client.on(Events.InteractionCreate, async interaction => {
             )
           ]
         });
+
         return;
       }
     }
