@@ -1,7 +1,18 @@
-const { createCanvas, loadImage } = require("@napi-rs/canvas");
+const { createCanvas, loadImage, GlobalFonts } = require("@napi-rs/canvas");
 const { AttachmentBuilder } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
+
+// Register bundled font for Linux/Railway environments
+const FONT_PATH = path.join(__dirname, "assets", "fonts", "HootieFont.ttf");
+let CARD_FONT = "sans-serif";
+if (fs.existsSync(FONT_PATH)) {
+  GlobalFonts.registerFromPath(FONT_PATH, "HootieFont");
+  CARD_FONT = "HootieFont";
+  console.log("✅ Registered HootieFont for trading cards");
+} else {
+  console.warn("⚠️ assets/fonts/HootieFont.ttf not found; card text may be blank on Linux.");
+}
 
 const RARITY_THEMES = {
   Common: {
@@ -180,13 +191,13 @@ async function renderCreatureCard(creature, options = {}) {
 
   // Creature Name
   ctx.fillStyle = "#FFFFFF";
-  ctx.font = "bold 30px sans-serif";
+  ctx.font = `bold 30px "${CARD_FONT}"`;
   ctx.textBaseline = "middle";
   ctx.fillText(creature.creature_name, 52, 68);
 
   // Type Pill on Right of Header
   const typeLabel = `${creature.creature_type.toUpperCase()}`;
-  ctx.font = "bold 16px sans-serif";
+  ctx.font = `bold 16px "${CARD_FONT}"`;
   const pillW = ctx.measureText(typeLabel).width + 32;
   const pillX = width - 50 - pillW;
   roundRect(ctx, pillX, 49, pillW, 38, 19);
@@ -211,7 +222,6 @@ async function renderCreatureCard(creature, options = {}) {
   const assetPath = findCreatureAsset(creature.creature_id);
   if (assetPath) {
     const img = await loadImage(assetPath);
-    // Cover-crop center
     const scale = Math.max(artW / img.width, artH / img.height);
     const drawW = img.width * scale;
     const drawH = img.height * scale;
@@ -222,7 +232,7 @@ async function renderCreatureCard(creature, options = {}) {
     ctx.fillStyle = "#24202E";
     ctx.fillRect(artX, artY, artW, artH);
     ctx.fillStyle = theme.accent;
-    ctx.font = "bold 24px sans-serif";
+    ctx.font = `bold 24px "${CARD_FONT}"`;
     ctx.textAlign = "center";
     ctx.fillText("ARTWORK PENDING", width / 2, artY + artH / 2);
     ctx.textAlign = "left";
@@ -241,12 +251,12 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.fill();
 
   ctx.fillStyle = theme.accent;
-  ctx.font = "bold 18px sans-serif";
+  ctx.font = `bold 18px "${CARD_FONT}"`;
   ctx.fillText(`${creature.rarity.toUpperCase()}  •  ${theme.stars}`, 50, 573);
 
   ctx.textAlign = "right";
   ctx.fillStyle = "#A0AEC0";
-  ctx.font = "bold 15px sans-serif";
+  ctx.font = `bold 15px "${CARD_FONT}"`;
   ctx.fillText("THE HOLLOW ARCHIVES", width - 50, 573);
   ctx.textAlign = "left";
 
@@ -259,7 +269,7 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.stroke();
 
   ctx.fillStyle = "#E2E8F0";
-  ctx.font = "19px sans-serif";
+  ctx.font = `19px "${CARD_FONT}"`;
   const loreLines = wrapText(ctx, creature.description, width - 104).slice(0, 3);
   loreLines.forEach((line, idx) => {
     ctx.fillText(line, 52, 640 + idx * 28);
@@ -276,12 +286,12 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.textAlign = "center";
   if (mode === "spawn") {
     ctx.fillStyle = "#FFFFFF";
-    ctx.font = "bold 22px sans-serif";
+    ctx.font = `bold 22px "${CARD_FONT}"`;
     ctx.fillText("⚡ FIRST TO TYPE  catch  IN CHAT CLAIMS IT!", width / 2, 772);
   } else if (mode === "caught") {
     const sec = catchTimeMs != null ? `${(catchTimeMs / 1000).toFixed(2)}s` : "";
     ctx.fillStyle = "#FFFFFF";
-    ctx.font = "bold 20px sans-serif";
+    ctx.font = `bold 20px "${CARD_FONT}"`;
     ctx.fillText(
       `CAUGHT BY ${(catcherName || "OWL").toUpperCase()}  •  ${sec}  •  OWNED: x${ownedCount}`,
       width / 2,
@@ -290,7 +300,7 @@ async function renderCreatureCard(creature, options = {}) {
   } else {
     const best = fastestMs != null ? `BEST: ${(fastestMs / 1000).toFixed(2)}s` : "UNCAUGHT";
     ctx.fillStyle = theme.accent;
-    ctx.font = "bold 20px sans-serif";
+    ctx.font = `bold 20px "${CARD_FONT}"`;
     ctx.fillText(
       `OWNED: x${ownedCount}   •   ${best}`,
       width / 2,
