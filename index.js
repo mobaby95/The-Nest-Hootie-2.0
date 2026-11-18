@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const db = require("./database");
 const commands = require("./commands");
+const { renderCreatureCard } = require("./cardRenderer");
 const fs = require("fs");
 const path = require("path");
 
@@ -34,6 +35,7 @@ if (!process.env.CLIENT_ID) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
   ]
@@ -141,10 +143,8 @@ const TIMEZONES = [
 ];
 
 // ==========================================
-// 🐉 CREATURE SPAWN WEIGHTS & CATCH CHANCE
+// 🐉 CREATURE SPAWN WEIGHTS & ACHIEVEMENTS
 // ==========================================
-
-const UNIVERSAL_CATCH_CHANCE = 0.65;
 
 const RARITY_SPAWN_WEIGHTS = [
   { rarity: "Common", weight: 50 },
@@ -155,20 +155,24 @@ const RARITY_SPAWN_WEIGHTS = [
   { rarity: "Mythic", weight: 1 }
 ];
 
-const RARITY_ORDER = {
-  Mythic: 1,
-  Legendary: 2,
-  "Ultra Rare": 3,
-  Rare: 4,
-  Uncommon: 5,
-  Common: 6
-};
+const CREATURE_ACHIEVEMENTS = [
+  ["first_catch", "First Catch", "Catch your very first wild creature in the Hollow."],
+  ["catch_10", "Hollow Scout", "Collect 10 total creatures."],
+  ["catch_50", "Night Tamer", "Collect 50 total creatures."],
+  ["speed_demon", "Speed Demon", "Catch a wild creature in under 1.50 seconds."],
+  ["lightning_owl", "Lightning Reflexes", "Catch a wild creature in under 0.80 seconds."],
+  ["unique_6", "Halfway Index", "Discover 6 different Hollow species."],
+  ["unique_12", "Master of the Hollow", "Collect all 12 Hollow creature species."],
+  ["mythic_tamer", "Diva's Favorite", "Catch or claim a Mythic creature."],
+  ["generous_owl", "Generous Owl", "Gift a creature to another member."]
+];
 
 const SPAWN_MIN_MS = 20 * 60 * 1000;
 const SPAWN_MAX_MS = 40 * 60 * 1000;
 const SPAWN_LIFETIME_MS = 5 * 60 * 1000;
 
 let spawnTimer = null;
+const jailTimers = new Map();
 
 // ==========================================
 // 📖 COMMUNITY MADLIBS TEMPLATES (15 PROMPTS)
@@ -285,35 +289,6 @@ const STORY_PROMPTS = [
 ];
 
 // ==========================================
-// 🗄️ EXTRA SQLITE TABLES FOR GAMES
-// ==========================================
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS arcade_active_games (
-    guild_id TEXT NOT NULL,
-    channel_id TEXT NOT NULL,
-    game_type TEXT NOT NULL,
-    started_by TEXT NOT NULL,
-    state_json TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (guild_id, channel_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS arcade_story_sessions (
-    guild_id TEXT NOT NULL,
-    channel_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    prompt TEXT NOT NULL,
-    started_by TEXT NOT NULL,
-    last_player_id TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (guild_id, channel_id)
-  );
-`);
-
-// ==========================================
 // 🌙 GENERAL HELPERS
 // ==========================================
 
@@ -344,9 +319,7 @@ function previousDate(dateString) {
 function weekStart(dateString) {
   const date = new Date(`${dateString}T12:00:00Z`);
   const day = date.getUTCDay();
-
   date.setUTCDate(date.getUTCDate() - ((day + 6) % 7));
-
   return date.toISOString().slice(0, 10);
 }
 
@@ -423,23 +396,6 @@ function progressBar(current, target, size = 12) {
   return "▰".repeat(filled) + "▱".repeat(size - filled);
 }
 
-function creatureImage(creatureId) {
-  const filePath = path.join(
-    __dirname,
-    "assets",
-    "creatures",
-    `${creatureId}.png`
-  );
-
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
-
-  return new AttachmentBuilder(filePath, {
-    name: `${creatureId}.png`
-  });
-}
-
 function randomItem(items) {
   return items[Math.floor(Math.random() * items.length)];
 }
@@ -452,7 +408,7 @@ function formatContributors(userIds) {
   return uniqueIds.map(id => `<@${id}>`).join(", ");
 }
 
-function splitTextChunks(text, maxLength = 3800) {
+function splitTextChunks(text, maxLength = 3500) {
   if (text.length <= maxLength) {
     return [text];
   }
@@ -490,7 +446,7 @@ function splitTextChunks(text, maxLength = 3800) {
 function getActiveChannelGame(guildId, channelId) {
   const tracked = db.prepare(`
     SELECT *
-    FROM arcade_active_games
+    FROM arcade_community_games
     WHERE guild_id = ?
       AND channel_id = ?
   `).get(guildId, channelId);
@@ -511,24 +467,6 @@ function getActiveChannelGame(guildId, channelId) {
       guild_id: guildId,
       channel_id: channelId,
       game_type: "lastletter",
-      started_by: "",
-      state_json: "{}"
-    };
-  }
-
-  const activeStory = db.prepare(`
-    SELECT *
-    FROM arcade_story_sessions
-    WHERE guild_id = ?
-      AND channel_id = ?
-  `).get(guildId, channelId);
-
-  if (activeStory) {
-    return {
-      guild_id: guildId,
-      channel_id: channelId,
-      game_type: "story",
-      started_by: activeStory.started_by,
       state_json: "{}"
     };
   }
@@ -595,7 +533,7 @@ function recordArcadeGame(userId, game, points, reason) {
 }
 
 // ==========================================
-// 🏅 BADGE SYSTEM
+// 🏅 WELLNESS BADGE SYSTEM
 // ==========================================
 
 function awardBadges(userId) {
@@ -1072,12 +1010,15 @@ async function showArcade(interaction) {
         "`/madlibs` — Start a 15-prompt community Madlibs story in chat (+5 pts/answer).\n" +
         "`!story start` / `!story end` — Moderator-led community story in chat (+3 pts/line).\n" +
         "`/lastletter start` / `/lastletter stop` — Moderator-led word chain in chat (+5 pts/word).\n\n" +
-        "**COLLECTIBLES**\n" +
-        "`/creatures collection` — View your companions.\n" +
-        "`/creatures profile` — Inspect a creature.\n" +
-        "`/catch` — Try to catch a wild creature (65% catch chance).\n\n" +
-        "`/arcadeleaderboard` — See the arcade high scores.\n\n" +
-        "Arcade Points are separate from Wellness Points and Owl XP.",
+        "**HOLLOW CREATURE CARDS**\n" +
+        "Type **`catch`** in chat first when a wild creature spawns (+10 Arcade Points)!\n" +
+        "`/creatures inventory` — View your stacked creature cards.\n" +
+        "`/creatures catalog` — View the 12-creature Hollow index.\n" +
+        "`/creatures profile` — Render a trading card for any creature.\n" +
+        "`/creatures daily` — Claim your free daily creature card.\n" +
+        "`/creatures gift` — Gift a duplicate creature to a friend.\n" +
+        "`/creatures leaderboard` & `/creatures achievements` — Track rankings & milestones.\n\n" +
+        "`/arcadeleaderboard` — See the arcade high scores.",
         COLORS.charcoal
       )
     ],
@@ -1110,6 +1051,7 @@ async function handleMadlibsCommand(interaction) {
 
     const template = randomItem(MADLIBS_TEMPLATES);
     const state = {
+      startedBy: userId,
       templateId: template.id,
       title: template.title,
       prompts: template.prompts,
@@ -1119,17 +1061,15 @@ async function handleMadlibsCommand(interaction) {
     };
 
     db.prepare(`
-      INSERT INTO arcade_active_games (
+      INSERT INTO arcade_community_games (
         guild_id,
         channel_id,
         game_type,
-        started_by,
         state_json,
-        created_at,
         updated_at
       )
-      VALUES (?, ?, 'madlibs', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).run(guildId, channelId, userId, JSON.stringify(state));
+      VALUES (?, ?, 'madlibs', ?, CURRENT_TIMESTAMP)
+    `).run(guildId, channelId, JSON.stringify(state));
 
     return { ok: true, template, state };
   })();
@@ -1174,7 +1114,7 @@ async function processMadlibsMessage(message) {
   const txResult = db.transaction(() => {
     const active = db.prepare(`
       SELECT *
-      FROM arcade_active_games
+      FROM arcade_community_games
       WHERE guild_id = ?
         AND channel_id = ?
         AND game_type = 'madlibs'
@@ -1231,10 +1171,10 @@ async function processMadlibsMessage(message) {
           story_text
         )
         VALUES (?, ?, ?, ?)
-      `).run(guildId, channelId, active.started_by || userId, completedStory);
+      `).run(guildId, channelId, state.startedBy || userId, completedStory);
 
       db.prepare(`
-        DELETE FROM arcade_active_games
+        DELETE FROM arcade_community_games
         WHERE guild_id = ?
           AND channel_id = ?
           AND game_type = 'madlibs'
@@ -1250,7 +1190,7 @@ async function processMadlibsMessage(message) {
     }
 
     db.prepare(`
-      UPDATE arcade_active_games
+      UPDATE arcade_community_games
       SET state_json = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE guild_id = ?
@@ -1333,42 +1273,7 @@ async function handleStoryPrefixCommand(message, action) {
       const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const prompt = randomItem(STORY_PROMPTS);
 
-      db.prepare(`
-        INSERT INTO arcade_active_games (
-          guild_id,
-          channel_id,
-          game_type,
-          started_by,
-          state_json,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, 'story', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).run(guildId, channelId, userId, JSON.stringify({ sessionId }));
-
-      db.prepare(`
-        INSERT INTO arcade_story_sessions (
-          guild_id,
-          channel_id,
-          session_id,
-          prompt,
-          started_by,
-          last_player_id,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(guild_id, channel_id) DO UPDATE SET
-          session_id = excluded.session_id,
-          prompt = excluded.prompt,
-          started_by = excluded.started_by,
-          last_player_id = '',
-          created_at = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(guildId, channelId, sessionId, prompt, userId);
-
-      // Record the session marker in the preserved arcade_story_contributions table
-      db.prepare(`
+      const markerInsert = db.prepare(`
         INSERT INTO arcade_story_contributions (
           guild_id,
           channel_id,
@@ -1377,6 +1282,25 @@ async function handleStoryPrefixCommand(message, action) {
         )
         VALUES (?, ?, ?, ?)
       `).run(guildId, channelId, "SYSTEM_START", `[SESSION:${sessionId}] ${prompt}`);
+
+      const state = {
+        sessionId,
+        prompt,
+        startedBy: userId,
+        lastPlayerId: "",
+        startRowId: Number(markerInsert.lastInsertRowid)
+      };
+
+      db.prepare(`
+        INSERT INTO arcade_community_games (
+          guild_id,
+          channel_id,
+          game_type,
+          state_json,
+          updated_at
+        )
+        VALUES (?, ?, 'story', ?, CURRENT_TIMESTAMP)
+      `).run(guildId, channelId, JSON.stringify(state));
 
       return { ok: true, prompt };
     })();
@@ -1406,56 +1330,41 @@ async function handleStoryPrefixCommand(message, action) {
 
   if (action === "end") {
     const endResult = db.transaction(() => {
-      const session = db.prepare(`
-        SELECT *
-        FROM arcade_story_sessions
-        WHERE guild_id = ?
-          AND channel_id = ?
-      `).get(guildId, channelId);
-
       const active = db.prepare(`
         SELECT *
-        FROM arcade_active_games
+        FROM arcade_community_games
         WHERE guild_id = ?
           AND channel_id = ?
           AND game_type = 'story'
       `).get(guildId, channelId);
 
-      if (!session && !active) {
+      if (!active) {
         return { ok: false };
       }
 
-      let sessionId = session?.session_id || "";
-      if (!sessionId && active?.state_json) {
-        try {
-          sessionId = JSON.parse(active.state_json).sessionId || "";
-        } catch {
-          sessionId = "";
-        }
+      let state = {};
+      try {
+        state = JSON.parse(active.state_json || "{}");
+      } catch {
+        state = {};
       }
 
-      const startMarker = sessionId
-        ? db.prepare(`
-            SELECT id, contribution
-            FROM arcade_story_contributions
-            WHERE guild_id = ?
-              AND channel_id = ?
-              AND user_id = 'SYSTEM_START'
-              AND contribution LIKE ?
-            ORDER BY id DESC
-            LIMIT 1
-          `).get(guildId, channelId, `[SESSION:${sessionId}]%`)
-        : db.prepare(`
-            SELECT id, contribution
-            FROM arcade_story_contributions
-            WHERE guild_id = ?
-              AND channel_id = ?
-              AND user_id = 'SYSTEM_START'
-            ORDER BY id DESC
-            LIMIT 1
-          `).get(guildId, channelId);
+      let minId = Number(state.startRowId) || 0;
 
-      const minId = startMarker ? startMarker.id : 0;
+      if (!minId && state.sessionId) {
+        const startMarker = db.prepare(`
+          SELECT id
+          FROM arcade_story_contributions
+          WHERE guild_id = ?
+            AND channel_id = ?
+            AND user_id = 'SYSTEM_START'
+            AND contribution LIKE ?
+          ORDER BY id DESC
+          LIMIT 1
+        `).get(guildId, channelId, `[SESSION:${state.sessionId}]%`);
+
+        minId = startMarker ? startMarker.id : 0;
+      }
 
       const entries = db.prepare(`
         SELECT id, user_id, contribution
@@ -1467,7 +1376,7 @@ async function handleStoryPrefixCommand(message, action) {
         ORDER BY id ASC
       `).all(guildId, channelId, minId);
 
-      if (sessionId) {
+      if (state.sessionId) {
         db.prepare(`
           INSERT INTO arcade_story_contributions (
             guild_id,
@@ -1476,17 +1385,11 @@ async function handleStoryPrefixCommand(message, action) {
             contribution
           )
           VALUES (?, ?, 'SYSTEM_END', ?)
-        `).run(guildId, channelId, `[SESSION_END:${sessionId}]`);
+        `).run(guildId, channelId, `[SESSION_END:${state.sessionId}]`);
       }
 
       db.prepare(`
-        DELETE FROM arcade_story_sessions
-        WHERE guild_id = ?
-          AND channel_id = ?
-      `).run(guildId, channelId);
-
-      db.prepare(`
-        DELETE FROM arcade_active_games
+        DELETE FROM arcade_community_games
         WHERE guild_id = ?
           AND channel_id = ?
           AND game_type = 'story'
@@ -1494,7 +1397,7 @@ async function handleStoryPrefixCommand(message, action) {
 
       return {
         ok: true,
-        prompt: session?.prompt || "A tale spun in The Nest",
+        prompt: state.prompt || "A tale spun in The Nest",
         entries
       };
     })();
@@ -1568,22 +1471,30 @@ async function processStoryMessage(message) {
   const userId = message.author.id;
 
   const txResult = db.transaction(() => {
-    const session = db.prepare(`
+    const active = db.prepare(`
       SELECT *
-      FROM arcade_story_sessions
+      FROM arcade_community_games
       WHERE guild_id = ?
         AND channel_id = ?
+        AND game_type = 'story'
     `).get(guildId, channelId);
 
-    if (!session) {
+    if (!active) {
       return { status: "inactive" };
+    }
+
+    let state = {};
+    try {
+      state = JSON.parse(active.state_json || "{}");
+    } catch {
+      return { status: "corrupt" };
     }
 
     if (contribution.length < 1 || contribution.length > 500) {
       return { status: "invalid_length", length: contribution.length };
     }
 
-    if (session.last_player_id === userId) {
+    if (state.lastPlayerId === userId) {
       return { status: "same_player" };
     }
 
@@ -1597,21 +1508,16 @@ async function processStoryMessage(message) {
       VALUES (?, ?, ?, ?)
     `).run(guildId, channelId, userId, contribution);
 
+    state.lastPlayerId = userId;
+
     db.prepare(`
-      UPDATE arcade_story_sessions
-      SET last_player_id = ?,
+      UPDATE arcade_community_games
+      SET state_json = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE guild_id = ?
         AND channel_id = ?
-    `).run(userId, guildId, channelId);
-
-    db.prepare(`
-      UPDATE arcade_active_games
-      SET updated_at = CURRENT_TIMESTAMP
-      WHERE guild_id = ?
-        AND channel_id = ?
         AND game_type = 'story'
-    `).run(guildId, channelId);
+    `).run(JSON.stringify(state), guildId, channelId);
 
     recordArcadeGame(
       userId,
@@ -1623,7 +1529,7 @@ async function processStoryMessage(message) {
     return { status: "accepted" };
   })();
 
-  if (txResult.status === "inactive") {
+  if (txResult.status === "inactive" || txResult.status === "corrupt") {
     return;
   }
 
@@ -1697,17 +1603,15 @@ async function handleLastLetterCommand(interaction) {
       }
 
       db.prepare(`
-        INSERT INTO arcade_active_games (
+        INSERT INTO arcade_community_games (
           guild_id,
           channel_id,
           game_type,
-          started_by,
           state_json,
-          created_at,
           updated_at
         )
-        VALUES (?, ?, 'lastletter', ?, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).run(guildId, channelId, userId);
+        VALUES (?, ?, 'lastletter', ?, CURRENT_TIMESTAMP)
+      `).run(guildId, channelId, JSON.stringify({ startedBy: userId }));
 
       db.prepare(`
         INSERT INTO arcade_lastletter_state (
@@ -1772,7 +1676,7 @@ async function handleLastLetterCommand(interaction) {
       `).run(guildId, channelId);
 
       const deletedLock = db.prepare(`
-        DELETE FROM arcade_active_games
+        DELETE FROM arcade_community_games
         WHERE guild_id = ?
           AND channel_id = ?
           AND game_type = 'lastletter'
@@ -1881,7 +1785,7 @@ async function processLastLetterMessage(message) {
     );
 
     db.prepare(`
-      UPDATE arcade_active_games
+      UPDATE arcade_community_games
       SET updated_at = CURRENT_TIMESTAMP
       WHERE guild_id = ?
         AND channel_id = ?
@@ -1959,7 +1863,15 @@ client.on(Events.MessageCreate, async message => {
       return;
     }
 
-    // Handle !story start and !story end moderator commands
+    // Cat Bot-style speed catching in chat
+    if (content.toLowerCase() === "catch") {
+      const caught = await trySpeedCatchInChat(message);
+      if (caught) {
+        return;
+      }
+    }
+
+    // Moderator prefix commands for Continue the Story
     const lowerContent = content.toLowerCase();
     if (lowerContent === "!story start" || lowerContent === "!story end") {
       const action = lowerContent.endsWith("start") ? "start" : "end";
@@ -1987,7 +1899,7 @@ client.on(Events.MessageCreate, async message => {
       return;
     }
   } catch (error) {
-    console.error("Community game message error:", error);
+    console.error("Message router error:", error);
 
     await message.reply({
       content: "🖤 Hootie had a little trouble processing that message. Please try again."
@@ -1996,7 +1908,73 @@ client.on(Events.MessageCreate, async message => {
 });
 
 // ==========================================
-// 🐉 CREATURE SPAWNING SYSTEM (WEIGHTED RARITY)
+// 🐉 CREATURE ACHIEVEMENTS & INVENTORY HELPERS
+// ==========================================
+
+function evaluateCreatureAchievements(userId, latestCatchMs = null, latestRarity = null) {
+  const totals = db.prepare(`
+    SELECT COALESCE(SUM(count), 0) AS total_cards, COUNT(*) AS unique_species
+    FROM user_creatures
+    WHERE user_id = ? AND count > 0
+  `).get(userId);
+
+  const giftsSent = db.prepare(`
+    SELECT gifts_count FROM creature_gifts_sent WHERE user_id = ?
+  `).get(userId)?.gifts_count || 0;
+
+  const earned = new Set(
+    db.prepare(`SELECT achievement_id FROM creature_achievements WHERE user_id = ?`)
+      .all(userId)
+      .map(r => r.achievement_id)
+  );
+
+  const checks = {
+    first_catch: totals.total_cards >= 1,
+    catch_10: totals.total_cards >= 10,
+    catch_50: totals.total_cards >= 50,
+    speed_demon: latestCatchMs !== null && latestCatchMs < 1500,
+    lightning_owl: latestCatchMs !== null && latestCatchMs < 800,
+    unique_6: totals.unique_species >= 6,
+    unique_12: totals.unique_species >= 12,
+    mythic_tamer: latestRarity === "Mythic",
+    generous_owl: giftsSent >= 1
+  };
+
+  const unlocked = [];
+  for (const [id, title, desc] of CREATURE_ACHIEVEMENTS) {
+    if (checks[id] && !earned.has(id)) {
+      db.prepare(`
+        INSERT OR IGNORE INTO creature_achievements (user_id, achievement_id)
+        VALUES (?, ?)
+      `).run(userId, id);
+      unlocked.push({ id, title, desc });
+    }
+  }
+  return unlocked;
+}
+
+function grantCreatureToUser(userId, creatureId, catchTimeMs = null) {
+  db.prepare(`
+    INSERT INTO user_creatures (user_id, creature_id, count, fastest_catch_ms)
+    VALUES (?, ?, 1, ?)
+    ON CONFLICT(user_id, creature_id) DO UPDATE SET
+      count = user_creatures.count + 1,
+      fastest_catch_ms = CASE
+        WHEN excluded.fastest_catch_ms IS NULL THEN user_creatures.fastest_catch_ms
+        WHEN user_creatures.fastest_catch_ms IS NULL THEN excluded.fastest_catch_ms
+        ELSE MIN(user_creatures.fastest_catch_ms, excluded.fastest_catch_ms)
+      END
+  `).run(userId, creatureId, catchTimeMs);
+
+  return db.prepare(`
+    SELECT count, fastest_catch_ms
+    FROM user_creatures
+    WHERE user_id = ? AND creature_id = ?
+  `).get(userId, creatureId);
+}
+
+// ==========================================
+// 🐉 CREATURE SPAWNING & SPEED-CATCH SYSTEM
 // ==========================================
 
 function selectWeightedCreature(catalog) {
@@ -2139,26 +2117,18 @@ async function spawnCreature(guildId, channelId) {
   const spawnId = Number(result.lastInsertRowid);
 
   try {
-    const image = creatureImage(creature.creature_id);
+    const card = await renderCreatureCard(creature, { mode: "spawn" });
 
     const embed = makeEmbed(
       "🌲 A WILD CREATURE HAS APPEARED!",
-      `Something is moving in the Hollow...\n\n` +
-      `**${creature.creature_name}**\n` +
-      `*${creature.rarity} ${creature.creature_type}*\n\n` +
-      `${creature.description}\n\n` +
-      "Use **/catch** to try to catch it! (65% catch chance)\n" +
-      "The first successful catch wins. You have five minutes.",
+      `A wild **${creature.creature_name}** (*${creature.rarity} ${creature.creature_type}*) appeared in the Hollow!\n` +
+      `Be the **first** to type **\`catch\`** in chat to claim this trading card!`,
       COLORS.crimson
-    );
-
-    if (image) {
-      embed.setImage(`attachment://${creature.creature_id}.png`);
-    }
+    ).setImage(`attachment://${card.fileName}`);
 
     const message = await channel.send({
       embeds: [embed],
-      ...(image ? { files: [image] } : {})
+      files: [card.attachment]
     });
 
     db.prepare(`
@@ -2185,6 +2155,81 @@ async function spawnCreature(guildId, channelId) {
     console.error("Could not post creature spawn:", error);
     return false;
   }
+}
+
+async function trySpeedCatchInChat(message) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  const claimResult = db.transaction(() => {
+    const spawn = db.prepare(`
+      SELECT
+        s.*,
+        c.creature_name,
+        c.creature_type,
+        c.rarity,
+        c.description
+      FROM creature_spawns s
+      JOIN creature_catalog c ON c.creature_id = s.creature_id
+      WHERE s.guild_id = ?
+        AND s.channel_id = ?
+        AND s.status = 'active'
+        AND s.expires_at > ?
+      ORDER BY s.id DESC
+      LIMIT 1
+    `).get(message.guild.id, message.channel.id, nowIso);
+
+    if (!spawn) return null;
+
+    const catchTimeMs = Math.max(1, now.getTime() - new Date(spawn.spawned_at).getTime());
+
+    const updated = db.prepare(`
+      UPDATE creature_spawns
+      SET status = 'caught',
+          caught_by = ?,
+          caught_at = ?,
+          catch_time_ms = ?
+      WHERE id = ?
+        AND status = 'active'
+    `).run(message.author.id, nowIso, catchTimeMs, spawn.id);
+
+    if (!updated.changes) return null;
+
+    const userRecord = grantCreatureToUser(message.author.id, spawn.creature_id, catchTimeMs);
+    recordArcadeGame(message.author.id, "creature_catch", 10, `Speed-caught ${spawn.creature_name}`);
+    const achievements = evaluateCreatureAchievements(message.author.id, catchTimeMs, spawn.rarity);
+
+    return { spawn, catchTimeMs, userRecord, achievements };
+  })();
+
+  if (!claimResult) return false;
+
+  const { spawn, catchTimeMs, userRecord, achievements } = claimResult;
+
+  const card = await renderCreatureCard(spawn, {
+    mode: "caught",
+    catcherName: message.author.username,
+    catchTimeMs,
+    ownedCount: userRecord.count
+  });
+
+  let description =
+    `🎉 **${message.author}** caught **${spawn.creature_name}** in **${(catchTimeMs / 1000).toFixed(2)}s**!\n` +
+    `📦 Owned: **x${userRecord.count}** • ✨ **+10 Arcade Points**`;
+
+  if (achievements.length) {
+    description += `\n\n🏅 **Achievement Unlocked:** ${achievements.map(a => a.title).join(", ")}`;
+  }
+
+  const embed = makeEmbed("✨ CREATURE CAUGHT!", description, COLORS.crimson)
+    .setImage(`attachment://${card.fileName}`);
+
+  await message.reply({
+    embeds: [embed],
+    files: [card.attachment]
+  });
+
+  return true;
 }
 
 function restoreCreatureSpawns() {
@@ -2220,7 +2265,7 @@ function restoreCreatureSpawns() {
 }
 
 // ==========================================
-// 🐉 CREATURE COMMANDS
+// 🐉 /CREATURES COMMANDS
 // ==========================================
 
 async function handleCreatureCommand(interaction) {
@@ -2228,13 +2273,14 @@ async function handleCreatureCommand(interaction) {
   const userId = interaction.user.id;
   const guildId = interaction.guildId;
 
-  if (subcommand === "collection") {
+  if (subcommand === "inventory") {
+    const targetUser = interaction.options.getUser("member") || interaction.user;
+
     const rows = db.prepare(`
-      SELECT c.*, uc.discovered_at
+      SELECT c.*, uc.count, uc.fastest_catch_ms
       FROM user_creatures uc
-      JOIN creature_catalog c
-        ON c.creature_id = uc.creature_id
-      WHERE uc.user_id = ?
+      JOIN creature_catalog c ON c.creature_id = uc.creature_id
+      WHERE uc.user_id = ? AND uc.count > 0
       ORDER BY
         CASE c.rarity
           WHEN 'Mythic' THEN 1
@@ -2242,84 +2288,331 @@ async function handleCreatureCommand(interaction) {
           WHEN 'Ultra Rare' THEN 3
           WHEN 'Rare' THEN 4
           WHEN 'Uncommon' THEN 5
-          WHEN 'Common' THEN 6
-          ELSE 7
+          ELSE 6
         END,
         c.creature_name
-    `).all(userId);
+    `).all(targetUser.id);
 
-    const total = db.prepare(`
-      SELECT COUNT(*) AS n
-      FROM creature_catalog
-    `).get().n;
+    const totalCards = rows.reduce((sum, r) => sum + r.count, 0);
 
-    const description = rows.length
-      ? rows.map(creature =>
-          `**${creature.creature_name}** · ${creature.rarity} ${creature.creature_type}`
-        ).join("\n")
-      : "Your collection is waiting for its first visitor. Keep an eye out for wild spawns!";
+    const lines = rows.length
+      ? rows.map(r => {
+          const speed = r.fastest_catch_ms ? ` · ⚡ ${(r.fastest_catch_ms / 1000).toFixed(2)}s` : "";
+          return `**${r.creature_name}** \`x${r.count}\` — *${r.rarity} ${r.creature_type}*${speed}`;
+        }).join("\n")
+      : "No creatures caught yet! Watch the spawn channel and type `catch` first.";
 
     await interaction.reply({
       embeds: [
         makeEmbed(
-          `🐉 ${interaction.user.username}'s Hollow Companions`,
-          `${description}\n\n**Collection:** ${rows.length}/${total}`,
+          `🎒 ${targetUser.username}'s Creature Inventory`,
+          `${lines}\n\n**Total Cards:** ${totalCards} • **Unique Species:** ${rows.length}/12`,
           COLORS.charcoal
+        )
+      ]
+    });
+    return;
+  }
+
+  if (subcommand === "catalog") {
+    const catalog = db.prepare(`
+      SELECT *
+      FROM creature_catalog
+      ORDER BY
+        CASE rarity
+          WHEN 'Mythic' THEN 1
+          WHEN 'Legendary' THEN 2
+          WHEN 'Ultra Rare' THEN 3
+          WHEN 'Rare' THEN 4
+          WHEN 'Uncommon' THEN 5
+          ELSE 6
+        END,
+        creature_name
+    `).all();
+
+    const ownedMap = new Map(
+      db.prepare(`SELECT creature_id, count FROM user_creatures WHERE user_id = ? AND count > 0`)
+        .all(userId)
+        .map(r => [r.creature_id, r.count])
+    );
+
+    const lines = catalog.map(c => {
+      const count = ownedMap.get(c.creature_id) || 0;
+      return count > 0
+        ? `✅ **${c.creature_name}** (\`${c.rarity}\` • ${c.creature_type}) — **x${count}**`
+        : `⬛ **???** (\`${c.rarity}\` • ${c.creature_type}) — *Uncaught*`;
+    }).join("\n");
+
+    await interaction.reply({
+      embeds: [
+        makeEmbed(
+          "📖 THE HOLLOW CREATURE CATALOG",
+          `${lines}\n\n**Discovered:** ${ownedMap.size}/${catalog.length}`,
+          COLORS.burgundy
         )
       ],
       ephemeral: true
     });
-
     return;
   }
 
   if (subcommand === "profile") {
-    const name = interaction.options.getString("creature", true).trim();
+    const query = interaction.options.getString("creature", true).trim();
+    const creature = db.prepare(`
+      SELECT *
+      FROM creature_catalog
+      WHERE lower(creature_name) = lower(?)
+         OR lower(creature_id) = lower(?)
+    `).get(query, query);
+
+    if (!creature) {
+      await interaction.reply({
+        content: "That creature isn't in the Hollow catalog.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    await interaction.deferReply();
+
+    const owned = db.prepare(`
+      SELECT count, fastest_catch_ms
+      FROM user_creatures
+      WHERE user_id = ? AND creature_id = ?
+    `).get(userId, creature.creature_id) || { count: 0, fastest_catch_ms: null };
+
+    const card = await renderCreatureCard(creature, {
+      mode: "profile",
+      ownedCount: owned.count,
+      fastestMs: owned.fastest_catch_ms
+    });
+
+    const embed = makeEmbed(
+      `🃏 ${creature.creature_name} — Trading Card`,
+      `**Rarity:** ${creature.rarity} • **Type:** ${creature.creature_type}\n` +
+      `**Owned by ${interaction.user.username}:** x${owned.count}`,
+      COLORS.charcoal
+    ).setImage(`attachment://${card.fileName}`);
+
+    await interaction.editReply({
+      embeds: [embed],
+      files: [card.attachment]
+    });
+    return;
+  }
+
+  if (subcommand === "daily") {
+    const today = localDate(getTimezone(userId));
+    const lastClaim = db.prepare(`
+      SELECT last_claim_date
+      FROM creature_daily_claims
+      WHERE user_id = ?
+    `).get(userId);
+
+    if (lastClaim && lastClaim.last_claim_date === today) {
+      await interaction.reply({
+        content: "🌙 You've already claimed today's daily creature card! Come back after midnight in your saved `/timezone`.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    await interaction.deferReply();
+
+    const catalog = db.prepare(`SELECT * FROM creature_catalog`).all();
+    const creature = selectWeightedCreature(catalog);
+
+    db.prepare(`
+      INSERT INTO creature_daily_claims (user_id, last_claim_date)
+      VALUES (?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET last_claim_date = excluded.last_claim_date
+    `).run(userId, today);
+
+    const record = grantCreatureToUser(userId, creature.creature_id, null);
+    const achievements = evaluateCreatureAchievements(userId, null, creature.rarity);
+
+    const card = await renderCreatureCard(creature, {
+      mode: "profile",
+      ownedCount: record.count,
+      fastestMs: record.fastest_catch_ms
+    });
+
+    let desc = `🎁 **${interaction.user.username}** opened their daily Hollow pack and pulled **${creature.creature_name}** (*${creature.rarity}*)!\n📦 Owned: **x${record.count}**`;
+    if (achievements.length) {
+      desc += `\n🏅 **Achievement Unlocked:** ${achievements.map(a => a.title).join(", ")}`;
+    }
+
+    await interaction.editReply({
+      embeds: [
+        makeEmbed("🎁 DAILY HOLLOW CREATURE", desc, COLORS.crimson)
+          .setImage(`attachment://${card.fileName}`)
+      ],
+      files: [card.attachment]
+    });
+    return;
+  }
+
+  if (subcommand === "gift") {
+    const recipient = interaction.options.getUser("member", true);
+    const query = interaction.options.getString("creature", true).trim();
+
+    if (recipient.bot || recipient.id === userId) {
+      await interaction.reply({
+        content: "You must choose another server member to gift a creature to.",
+        ephemeral: true
+      });
+      return;
+    }
 
     const creature = db.prepare(`
       SELECT *
       FROM creature_catalog
       WHERE lower(creature_name) = lower(?)
          OR lower(creature_id) = lower(?)
-    `).get(name, name);
+    `).get(query, query);
 
     if (!creature) {
       await interaction.reply({
-        content: "I couldn't find that creature in the Hollow catalog.",
+        content: "Couldn't find that creature.",
         ephemeral: true
       });
       return;
     }
 
-    const owned = db.prepare(`
-      SELECT 1
-      FROM user_creatures
-      WHERE user_id = ?
-        AND creature_id = ?
-    `).get(userId, creature.creature_id);
+    const giftResult = db.transaction(() => {
+      const senderRow = db.prepare(`
+        SELECT count
+        FROM user_creatures
+        WHERE user_id = ? AND creature_id = ?
+      `).get(userId, creature.creature_id);
 
-    const image = creatureImage(creature.creature_id);
+      if (!senderRow || senderRow.count < 1) {
+        return { ok: false };
+      }
 
-    const embed = makeEmbed(
-      `🐉 ${creature.creature_name}`,
-      `**Type:** ${creature.creature_type}\n` +
-      `**Rarity:** ${creature.rarity}\n` +
-      `**Catch chance:** ${Math.round(UNIVERSAL_CATCH_CHANCE * 100)}%\n` +
-      `**In your collection:** ${owned ? "Yes!" : "Not yet"}\n\n` +
-      creature.description,
-      COLORS.charcoal
-    );
+      db.prepare(`
+        UPDATE user_creatures
+        SET count = count - 1
+        WHERE user_id = ? AND creature_id = ?
+      `).run(userId, creature.creature_id);
 
-    if (image) {
-      embed.setImage(`attachment://${creature.creature_id}.png`);
+      grantCreatureToUser(recipient.id, creature.creature_id, null);
+
+      db.prepare(`
+        INSERT INTO creature_gifts_sent (user_id, gifts_count)
+        VALUES (?, 1)
+        ON CONFLICT(user_id) DO UPDATE SET gifts_count = creature_gifts_sent.gifts_count + 1
+      `).run(userId);
+
+      evaluateCreatureAchievements(userId);
+      evaluateCreatureAchievements(recipient.id, null, creature.rarity);
+      return { ok: true };
+    })();
+
+    if (!giftResult.ok) {
+      await interaction.reply({
+        content: `You don't have any **${creature.creature_name}** cards in your inventory to gift!`,
+        ephemeral: true
+      });
+      return;
     }
 
     await interaction.reply({
-      embeds: [embed],
-      ...(image ? { files: [image] } : {}),
+      embeds: [
+        makeEmbed(
+          "🎀 CREATURE GIFTED!",
+          `🦉 <@${userId}> gifted **1x ${creature.creature_name}** (*${creature.rarity}*) to <@${recipient.id}>!`,
+          COLORS.burgundy
+        )
+      ]
+    });
+    return;
+  }
+
+  if (subcommand === "leaderboard") {
+    const type = interaction.options.getString("type") || "total";
+
+    if (type === "fastest") {
+      const rows = db.prepare(`
+        SELECT uc.user_id, MIN(uc.fastest_catch_ms) AS best_ms, c.creature_name
+        FROM user_creatures uc
+        JOIN creature_catalog c ON c.creature_id = uc.creature_id
+        WHERE uc.fastest_catch_ms IS NOT NULL
+        GROUP BY uc.user_id
+        ORDER BY best_ms ASC
+        LIMIT 10
+      `).all();
+
+      const lines = rows.length
+        ? rows.map((r, i) => `**${i + 1}.** <@${r.user_id}> — **${(r.best_ms / 1000).toFixed(2)}s** (*${r.creature_name}*)`).join("\n")
+        : "No timed catches recorded yet!";
+
+      await interaction.reply({
+        embeds: [makeEmbed("⚡ FASTEST CATCH LEADERBOARD", lines, COLORS.charcoal)]
+      });
+      return;
+    }
+
+    if (type === "unique") {
+      const rows = db.prepare(`
+        SELECT user_id, COUNT(*) AS score
+        FROM user_creatures
+        WHERE count > 0
+        GROUP BY user_id
+        ORDER BY score DESC
+        LIMIT 10
+      `).all();
+
+      const lines = rows.length
+        ? rows.map((r, i) => `**${i + 1}.** <@${r.user_id}> — **${r.score}/12 species**`).join("\n")
+        : "No creatures collected yet!";
+
+      await interaction.reply({
+        embeds: [makeEmbed("📖 UNIQUE SPECIES LEADERBOARD", lines, COLORS.charcoal)]
+      });
+      return;
+    }
+
+    const rows = db.prepare(`
+      SELECT user_id, SUM(count) AS score
+      FROM user_creatures
+      WHERE count > 0
+      GROUP BY user_id
+      ORDER BY score DESC
+      LIMIT 10
+    `).all();
+
+    const lines = rows.length
+      ? rows.map((r, i) => `**${i + 1}.** <@${r.user_id}> — **${r.score} creatures**`).join("\n")
+      : "No creatures collected yet!";
+
+    await interaction.reply({
+      embeds: [makeEmbed("🐉 TOTAL CREATURES CAUGHT LEADERBOARD", lines, COLORS.charcoal)]
+    });
+    return;
+  }
+
+  if (subcommand === "achievements") {
+    const earned = new Set(
+      db.prepare(`SELECT achievement_id FROM creature_achievements WHERE user_id = ?`)
+        .all(userId)
+        .map(r => r.achievement_id)
+    );
+
+    const lines = CREATURE_ACHIEVEMENTS.map(([id, title, desc]) =>
+      `${earned.has(id) ? "🏅" : "🔒"} **${title}** — ${desc}`
+    ).join("\n");
+
+    await interaction.reply({
+      embeds: [
+        makeEmbed(
+          `🏆 ${interaction.user.username}'s Creature Achievements (${earned.size}/${CREATURE_ACHIEVEMENTS.length})`,
+          lines,
+          COLORS.burgundy
+        )
+      ],
       ephemeral: true
     });
-
     return;
   }
 
@@ -2387,7 +2680,7 @@ async function handleCreatureCommand(interaction) {
       `).run(guildId);
 
       await interaction.reply({
-        content: "🦇 Automatic creature spawning is now active! Wild creatures will appear every 20–40 minutes.",
+        content: "🦇 Automatic creature spawning is now active! First to type `catch` in chat wins.",
         ephemeral: true
       });
 
@@ -2432,7 +2725,7 @@ async function handleCreatureCommand(interaction) {
 
       await interaction.editReply(
         spawned
-          ? "✨ A creature has been spawned in the configured channel!"
+          ? "✨ A wild creature trading card has spawned in the configured channel!"
           : "There is already an active creature, or the spawn channel is unavailable."
       );
 
@@ -2442,113 +2735,40 @@ async function handleCreatureCommand(interaction) {
 }
 
 // ==========================================
-// 🪤 CATCH SYSTEM (UNIVERSAL 65% CATCH CHANCE)
-// ==========================================
-
-function attemptCatch(userId, guildId, channelId) {
-  const now = new Date().toISOString();
-
-  const spawn = db.prepare(`
-    SELECT
-      s.*,
-      c.creature_name,
-      c.creature_type,
-      c.rarity,
-      c.description,
-      c.catch_chance
-    FROM creature_spawns s
-    JOIN creature_catalog c ON c.creature_id = s.creature_id
-    WHERE s.guild_id = ?
-      AND s.channel_id = ?
-      AND s.status = 'active'
-      AND s.expires_at > ?
-    ORDER BY s.id DESC
-    LIMIT 1
-  `).get(guildId, channelId, now);
-
-  if (!spawn) {
-    return { result: "none" };
-  }
-
-  const transaction = db.transaction(() => {
-    const alreadyTried = db.prepare(`
-      SELECT 1
-      FROM creature_spawn_attempts
-      WHERE spawn_id = ?
-        AND user_id = ?
-    `).get(spawn.id, userId);
-
-    if (alreadyTried) {
-      return { result: "tried", spawn };
-    }
-
-    const stillActive = db.prepare(`
-      SELECT 1
-      FROM creature_spawns
-      WHERE id = ?
-        AND status = 'active'
-        AND expires_at > ?
-    `).get(spawn.id, now);
-
-    if (!stillActive) {
-      return { result: "gone", spawn };
-    }
-
-    const chance = UNIVERSAL_CATCH_CHANCE;
-    const success = Math.random() < chance;
-
-    db.prepare(`
-      INSERT INTO creature_spawn_attempts (
-        spawn_id,
-        user_id,
-        success
-      )
-      VALUES (?, ?, ?)
-    `).run(spawn.id, userId, success ? 1 : 0);
-
-    if (!success) {
-      return {
-        result: "failed",
-        spawn,
-        chance: Math.round(chance * 100)
-      };
-    }
-
-    const claimed = db.prepare(`
-      UPDATE creature_spawns
-      SET status = 'caught',
-          caught_by = ?,
-          caught_at = ?
-      WHERE id = ?
-        AND status = 'active'
-        AND expires_at > ?
-    `).run(userId, now, spawn.id, now);
-
-    if (!claimed.changes) {
-      return { result: "lost", spawn };
-    }
-
-    const added = db.prepare(`
-      INSERT OR IGNORE INTO user_creatures (user_id, creature_id)
-      VALUES (?, ?)
-    `).run(userId, spawn.creature_id);
-
-    return {
-      result: "caught",
-      spawn,
-      added: added.changes > 0
-    };
-  });
-
-  return transaction();
-}
-
-// ==========================================
-// 🔒 JAIL SYSTEM
+// 🔒 JAIL SYSTEM (EXACT TIMER + FORCE RELEASE)
 // ==========================================
 
 function jailRoleId() {
   return process.env.JAILBIRD_ROLE_ID;
+}
+
+function jailChannelId() {
+  return process.env.JAIL_CHANNEL_ID;
+}
+
+function scheduleJailRelease(guildId, userId, releaseAtIso) {
+  const key = `${guildId}:${userId}`;
+  if (jailTimers.has(key)) {
+    clearTimeout(jailTimers.get(key));
+    jailTimers.delete(key);
+  }
+
+  const delay = Math.max(0, new Date(releaseAtIso).getTime() - Date.now());
+
+  // setTimeout max safe delay is ~24.8 days (2^31 - 1 ms); max sentence is 7 days (10080m)
+  const timer = setTimeout(async () => {
+    jailTimers.delete(key);
+    try {
+      const guild = client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null);
+      if (guild) {
+        await releaseJailedMember(guild, userId, true);
+      }
+    } catch (error) {
+      console.error(`Scheduled jail release failed for ${userId}:`, error);
+    }
+  }, delay);
+
+  jailTimers.set(key, timer);
 }
 
 async function handleJail(interaction) {
@@ -2622,16 +2842,9 @@ async function handleJail(interaction) {
     return;
   }
 
-  if (target.roles.cache.has(roleId)) {
-    await interaction.reply({
-      content: "That member is already in Nest Jail.",
-      ephemeral: true
-    });
-    return;
-  }
-
   const jailedAt = new Date();
   const releaseAt = new Date(jailedAt.getTime() + minutes * 60 * 1000);
+  const releaseAtIso = releaseAt.toISOString();
 
   await target.roles.add(role, `Nest Jail: ${reason}`);
 
@@ -2657,23 +2870,45 @@ async function handleJail(interaction) {
     interaction.user.id,
     reason,
     jailedAt.toISOString(),
-    releaseAt.toISOString()
+    releaseAtIso
   );
 
+  // Schedule exact release timer so they are freed right on time
+  scheduleJailRelease(guild.id, target.id, releaseAtIso);
+
+  const jailEmbed = makeEmbed(
+    "🔒 WELCOME TO NEST JAIL",
+    `${target} has been sent to Nest Jail for **${minutes} minute(s)**.\n\n` +
+    `**Reason:** ${reason}\n` +
+    `**Release:** <t:${Math.floor(releaseAt.getTime() / 1000)}:R>`,
+    COLORS.crimson
+  );
+
+  const jChanId = jailChannelId();
+  if (jChanId) {
+    const jailChan = guild.channels.cache.get(jChanId)
+      || await guild.channels.fetch(jChanId).catch(() => null);
+
+    if (jailChan && jailChan.isTextBased()) {
+      await jailChan.send({
+        content: `${target}`,
+        embeds: [jailEmbed]
+      }).catch(() => {});
+    }
+  }
+
   await interaction.reply({
-    embeds: [
-      makeEmbed(
-        "🦇 WELCOME TO NEST JAIL",
-        `${target} has been sent to Nest Jail for **${minutes} minutes**.\n\n` +
-        `**Reason:** ${reason}\n` +
-        `**Release:** <t:${Math.floor(releaseAt.getTime() / 1000)}:R>`,
-        COLORS.crimson
-      )
-    ]
+    embeds: [jailEmbed]
   });
 }
 
 async function releaseJailedMember(guild, userId, announce = true) {
+  const key = `${guild.id}:${userId}`;
+  if (jailTimers.has(key)) {
+    clearTimeout(jailTimers.get(key));
+    jailTimers.delete(key);
+  }
+
   const sentence = db.prepare(`
     SELECT *
     FROM jail_sentences
@@ -2681,31 +2916,20 @@ async function releaseJailedMember(guild, userId, announce = true) {
       AND guild_id = ?
   `).get(userId, guild.id);
 
-  if (!sentence) return false;
-
   const roleId = jailRoleId();
+  const member = await guild.members.fetch(userId).catch(() => null);
+  const hadRole = Boolean(member && roleId && member.roles.cache.has(roleId));
 
-  if (!roleId) {
-    console.error("Cannot release jailed member: JAILBIRD_ROLE_ID is missing.");
+  // If neither a saved sentence nor the Jailbird role exists, nothing to release
+  if (!sentence && !hadRole) {
     return false;
   }
 
-  const member = await guild.members.fetch(userId).catch(() => null);
-
-  if (!member) {
-    db.prepare(`
-      DELETE FROM jail_sentences
-      WHERE user_id = ?
-    `).run(userId);
-
-    return true;
-  }
-
-  if (member.roles.cache.has(roleId)) {
+  if (hadRole) {
     try {
-      await member.roles.remove(roleId, "Nest Jail sentence completed");
+      await member.roles.remove(roleId, "Released from Nest Jail");
     } catch (error) {
-      console.error(`Could not release ${userId} from jail:`, error);
+      console.error(`Could not remove Jailbird role from ${userId}:`, error);
       return false;
     }
   }
@@ -2715,18 +2939,22 @@ async function releaseJailedMember(guild, userId, announce = true) {
     WHERE user_id = ?
   `).run(userId);
 
-  if (announce) {
-    const channel = guild.systemChannel;
+  if (announce && member) {
+    const releaseEmbed = makeEmbed(
+      "🔓 RELEASED FROM NEST JAIL",
+      `${member} has served their time and is free to return to The Nest!`,
+      COLORS.silver
+    );
 
-    if (channel) {
+    const jChanId = jailChannelId();
+    const channel = (jChanId && (
+      guild.channels.cache.get(jChanId) ||
+      await guild.channels.fetch(jChanId).catch(() => null)
+    )) || guild.systemChannel;
+
+    if (channel && channel.isTextBased()) {
       await channel.send({
-        embeds: [
-          makeEmbed(
-            "🔓 RELEASED FROM NEST JAIL",
-            `${member} has served their time and is free to return to The Nest!`,
-            COLORS.silver
-          )
-        ]
+        embeds: [releaseEmbed]
       }).catch(() => {});
     }
   }
@@ -2754,24 +2982,42 @@ async function handleRelease(interaction) {
   await interaction.reply({
     content: released
       ? `🔓 ${target} has been released from Nest Jail.`
-      : "That member does not have an active saved jail sentence, or I could not remove the jail role.",
+      : "That member does not have an active jail sentence or the Jailbird role, or my role is not high enough to remove it.",
     ephemeral: true
   });
 }
 
 async function checkJailSentences() {
+  const nowIso = new Date().toISOString();
+
+  // Release any overdue sentences immediately
   const due = db.prepare(`
     SELECT *
     FROM jail_sentences
     WHERE release_at <= ?
-  `).all(new Date().toISOString());
+  `).all(nowIso);
 
   for (const sentence of due) {
-    const guild = await client.guilds.fetch(sentence.guild_id).catch(() => null);
+    const guild = client.guilds.cache.get(sentence.guild_id)
+      || await client.guilds.fetch(sentence.guild_id).catch(() => null);
 
     if (!guild) continue;
 
     await releaseJailedMember(guild, sentence.user_id, true);
+  }
+
+  // Ensure timers exist for all future active sentences (e.g., after a bot restart)
+  const upcoming = db.prepare(`
+    SELECT *
+    FROM jail_sentences
+    WHERE release_at > ?
+  `).all(nowIso);
+
+  for (const sentence of upcoming) {
+    const key = `${sentence.guild_id}:${sentence.user_id}`;
+    if (!jailTimers.has(key)) {
+      scheduleJailRelease(sentence.guild_id, sentence.user_id, sentence.release_at);
+    }
   }
 }
 
@@ -2780,7 +3026,6 @@ async function checkJailSentences() {
 // ==========================================
 
 function restoreActiveChannelGames() {
-  // Ensure any legacy active Last Letter or Story rounds are mirrored in arcade_active_games
   const lastLetterRows = db.prepare(`
     SELECT guild_id, channel_id
     FROM arcade_lastletter_state
@@ -2788,43 +3033,19 @@ function restoreActiveChannelGames() {
 
   for (const row of lastLetterRows) {
     db.prepare(`
-      INSERT OR IGNORE INTO arcade_active_games (
+      INSERT OR IGNORE INTO arcade_community_games (
         guild_id,
         channel_id,
         game_type,
-        started_by,
         state_json
       )
-      VALUES (?, ?, 'lastletter', '', '{}')
+      VALUES (?, ?, 'lastletter', '{}')
     `).run(row.guild_id, row.channel_id);
-  }
-
-  const storyRows = db.prepare(`
-    SELECT guild_id, channel_id, session_id, started_by
-    FROM arcade_story_sessions
-  `).all();
-
-  for (const row of storyRows) {
-    db.prepare(`
-      INSERT OR IGNORE INTO arcade_active_games (
-        guild_id,
-        channel_id,
-        game_type,
-        started_by,
-        state_json
-      )
-      VALUES (?, ?, 'story', ?, ?)
-    `).run(
-      row.guild_id,
-      row.channel_id,
-      row.started_by || "",
-      JSON.stringify({ sessionId: row.session_id })
-    );
   }
 
   const activeCount = db.prepare(`
     SELECT COUNT(*) AS n
-    FROM arcade_active_games
+    FROM arcade_community_games
   `).get().n;
 
   console.log(`🎮 Restored ${activeCount} active community game(s) from SQLite`);
@@ -2849,6 +3070,30 @@ client.on(Events.InteractionCreate, async interaction => {
             .slice(0, 25)
             .map(zone => ({ name: zone, value: zone }))
         );
+        return;
+      }
+
+      if (interaction.commandName === "creatures") {
+        const query = interaction.options.getFocused().toLowerCase();
+        const rows = db.prepare(`
+          SELECT creature_id, creature_name, rarity
+          FROM creature_catalog
+        `).all();
+
+        await interaction.respond(
+          rows
+            .filter(
+              c =>
+                c.creature_name.toLowerCase().includes(query) ||
+                c.creature_id.toLowerCase().includes(query)
+            )
+            .slice(0, 25)
+            .map(c => ({
+              name: `${c.creature_name} (${c.rarity})`,
+              value: c.creature_id
+            }))
+        );
+        return;
       }
 
       return;
@@ -3333,98 +3578,6 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    if (interaction.commandName === "catch") {
-      if (!interaction.guildId) {
-        await interaction.reply({
-          content: "Creature catching is only available inside The Nest.",
-          ephemeral: true
-        });
-        return;
-      }
-
-      const result = attemptCatch(
-        userId,
-        interaction.guildId,
-        interaction.channelId
-      );
-
-      if (result.result === "none") {
-        await interaction.reply({
-          content: "🌙 There are no wild creatures here right now. Keep watch for the next spawn!",
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (result.result === "tried") {
-        await interaction.reply({
-          content: "You've already tried to catch this creature. Give another night owl a chance!",
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (result.result === "gone") {
-        await interaction.reply({
-          content: "That creature has already disappeared into the Hollow.",
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (result.result === "lost") {
-        await interaction.reply({
-          content: "Another night owl caught it first!",
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (result.result === "failed") {
-        await interaction.reply({
-          embeds: [
-            makeEmbed(
-              "🍃 THE CREATURE ESCAPED!",
-              `**${result.spawn.creature_name}** slipped away!\n\n` +
-              `Your catch chance was ${result.chance}%.\n` +
-              `You cannot retry this particular spawn, but another creature may appear soon.`,
-              COLORS.charcoal
-            )
-          ],
-          ephemeral: true
-        });
-        return;
-      }
-
-      if (result.result === "caught") {
-        if (result.added) {
-          recordArcadeGame(
-            userId,
-            "creature_catch",
-            10,
-            `Caught ${result.spawn.creature_name}`
-          );
-        }
-
-        await interaction.reply({
-          embeds: [
-            makeEmbed(
-              "✨ CREATURE CAUGHT!",
-              `🎉 <@${userId}> caught **${result.spawn.creature_name}**!\n\n` +
-              `*${result.spawn.rarity} ${result.spawn.creature_type}*\n` +
-              `${result.spawn.description}\n\n` +
-              (result.added
-                ? "Added to your collection! +10 Arcade Points."
-                : "You already owned this creature, but you won the catch!"),
-              COLORS.crimson
-            )
-          ]
-        });
-
-        return;
-      }
-    }
-
     // ======================================
     // 🏆 ARCADE LEADERBOARD
     // ======================================
@@ -3538,7 +3691,7 @@ client.once(Events.ClientReady, async readyClient => {
     console.log("📖 Chat-based Community Madlibs ready");
     console.log("📜 Chat-based Continue the Story ready");
     console.log("📝 Chat-based Last Letter ready");
-    console.log("🐉 Creature spawning system ready");
+    console.log("🐉 Cat Bot-style creature trading card system ready");
     console.log("🔒 Jail sentence checker ready");
 
   } catch (error) {
