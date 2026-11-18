@@ -1,17 +1,27 @@
 const { PermissionFlagsBits } = require("discord.js");
 const db = require("../../database");
 const { COLORS } = require("../config/constants");
-const { makeEmbed } = require("../utils/embeds");
-const { renderJailMugshot } = require("../../graphicsRenderer");
+const { makeEmbed, randomItem } = require("../utils/embeds");
+const {
+  renderJailMugshot,
+  renderNaughtyNestWelcome
+} = require("../../graphicsRenderer");
 
 const jailTimers = new Map();
 
+const PUBLIC_JAIL_LINES = [
+  "🚨 **BUSTED!** Hootie swooped down and hauled {target} straight to the Naughty Nest!",
+  "🦉 **HOOT HOOT, IT'S THE COOP!** {target} got tossed into Nest Jail for {minutes} minute(s)!",
+  "🪶 **RUFFLED FEATHERS!** {target} has been escorted to the Naughty Nest to cool their wings!",
+  "🔒 **LOCKED IN THE COOP!** {target} is serving {minutes} minute(s) in the Naughty Nest!"
+];
+
 function jailRoleId() {
-  return process.env.JAILBIRD_ROLE_ID;
+  return (process.env.JAILBIRD_ROLE_ID || "").trim();
 }
 
 function jailChannelId() {
-  return process.env.JAIL_CHANNEL_ID;
+  return (process.env.JAIL_CHANNEL_ID || "").trim();
 }
 
 function scheduleJailRelease(client, guildId, userId, releaseAtIso) {
@@ -22,11 +32,14 @@ function scheduleJailRelease(client, guildId, userId, releaseAtIso) {
   }
 
   const delay = Math.max(0, new Date(releaseAtIso).getTime() - Date.now());
+  console.log(`⏳ Scheduled Nest Jail release for ${userId} in ${Math.round(delay / 1000)}s`);
 
   const timer = setTimeout(async () => {
     jailTimers.delete(key);
     try {
-      const guild = client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null);
+      const guild =
+        client.guilds.cache.get(guildId) ||
+        (await client.guilds.fetch(guildId).catch(() => null));
       if (guild) {
         await releaseJailedMember(guild, userId, true);
       }
@@ -45,19 +58,25 @@ async function releaseJailedMember(guild, userId, announce = true) {
     jailTimers.delete(key);
   }
 
-  const sentence = db.prepare(`
-    SELECT * FROM jail_sentences WHERE user_id = ? AND guild_id = ?
-  `).get(userId, guild.id);
+  const sentence = db
+    .prepare(`SELECT * FROM jail_sentences WHERE user_id = ? AND guild_id = ?`)
+    .get(userId, guild.id);
 
   const roleId = jailRoleId();
-  const member = await guild.members.fetch(userId).catch(() => null);
+  const member = await guild.members
+    .fetch({ user: userId, force: true })
+    .catch(() => null);
   const hadRole = Boolean(member && roleId && member.roles.cache.has(roleId));
 
-  if (!sentence && !hadRole) return false;
+  if (!sentence && !hadRole) {
+    db.prepare(`DELETE FROM jail_sentences WHERE user_id = ?`).run(userId);
+    return false;
+  }
 
-  if (hadRole) {
+  if (member && roleId) {
     try {
       await member.roles.remove(roleId, "Released from Nest Jail");
+      console.log(`🔓 Removed Jailbird role from ${userId} in ${guild.name}`);
     } catch (error) {
       console.error(`Could not remove Jailbird role from ${userId}:`, error);
       return false;
@@ -68,19 +87,22 @@ async function releaseJailedMember(guild, userId, announce = true) {
 
   if (announce && member) {
     const releaseEmbed = makeEmbed(
-      "🔓 RELEASED FROM NEST JAIL",
-      `${member} has served their time and is free to return to The Nest!`,
+      "🕊️ FREE BIRD!",
+      `${member} has served their time in the Naughty Nest and is free to roam the rafters again!`,
       COLORS.silver
     );
 
     const jChanId = jailChannelId();
-    const channel = (jChanId && (
-      guild.channels.cache.get(jChanId) ||
-      await guild.channels.fetch(jChanId).catch(() => null)
-    )) || guild.systemChannel;
+    const channel =
+      (jChanId &&
+        (guild.channels.cache.get(jChanId) ||
+          (await guild.channels.fetch(jChanId).catch(() => null)))) ||
+      guild.systemChannel;
 
     if (channel && channel.isTextBased()) {
-      await channel.send({ embeds: [releaseEmbed] }).catch(() => {});
+      await channel.send({ content: `${member}`, embeds: [releaseEmbed] }).catch(err => {
+        console.error("Could not send release message:", err);
+      });
     }
   }
 
@@ -90,32 +112,41 @@ async function releaseJailedMember(guild, userId, announce = true) {
 async function checkJailSentences(client) {
   const nowIso = new Date().toISOString();
 
-  const due = db.prepare(`
-    SELECT * FROM jail_sentences WHERE release_at <= ?
-  `).all(nowIso);
+  const due = db
+    .prepare(`SELECT * FROM jail_sentences WHERE release_at <= ?`)
+    .all(nowIso);
 
   for (const sentence of due) {
-    const guild = client.guilds.cache.get(sentence.guild_id)
-      || await client.guilds.fetch(sentence.guild_id).catch(() => null);
+    const guild =
+      client.guilds.cache.get(sentence.guild_id) ||
+      (await client.guilds.fetch(sentence.guild_id).catch(() => null));
 
     if (!guild) continue;
     await releaseJailedMember(guild, sentence.user_id, true);
   }
 
-  const upcoming = db.prepare(`
-    SELECT * FROM jail_sentences WHERE release_at > ?
-  `).all(nowIso);
+  const upcoming = db
+    .prepare(`SELECT * FROM jail_sentences WHERE release_at > ?`)
+    .all(nowIso);
 
   for (const sentence of upcoming) {
     const key = `${sentence.guild_id}:${sentence.user_id}`;
     if (!jailTimers.has(key)) {
-      scheduleJailRelease(client, sentence.guild_id, sentence.user_id, sentence.release_at);
+      scheduleJailRelease(
+        client,
+        sentence.guild_id,
+        sentence.user_id,
+        sentence.release_at
+      );
     }
   }
 }
 
 async function handleJailCommand(interaction, client) {
-  if (!interaction.guild || !interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) {
+  if (
+    !interaction.guild ||
+    !interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)
+  ) {
     await interaction.reply({
       content: "🔒 Only moderators and administrators can use Nest Jail.",
       ephemeral: true
@@ -128,13 +159,16 @@ async function handleJailCommand(interaction, client) {
   if (subcommand === "lock") {
     const roleId = jailRoleId();
     if (!roleId) {
-      await interaction.reply({ content: "The JAILBIRD_ROLE_ID environment variable is missing in Railway." });
+      await interaction.reply({
+        content: "The JAILBIRD_ROLE_ID environment variable is missing in Railway."
+      });
       return;
     }
 
     const targetUser = interaction.options.getUser("member", true);
     const minutes = interaction.options.getInteger("minutes", true);
-    const reason = interaction.options.getString("reason") || "No reason provided.";
+    const reason =
+      interaction.options.getString("reason") || "General owl mischief.";
 
     if (targetUser.id === interaction.user.id) {
       await interaction.reply({ content: "You cannot send yourself to Nest Jail." });
@@ -142,17 +176,25 @@ async function handleJailCommand(interaction, client) {
     }
 
     if (targetUser.id === client.user.id) {
-      await interaction.reply({ content: "Hootie cannot be jailed. Who would run the Nest?" });
+      await interaction.reply({
+        content: "Hootie cannot be jailed. Who would run the Nest?"
+      });
       return;
     }
 
     const guild = interaction.guild;
-    const target = await guild.members.fetch(targetUser.id).catch(() => null);
-    const role = guild.roles.cache.get(roleId);
+    const target = await guild.members
+      .fetch({ user: targetUser.id, force: true })
+      .catch(() => null);
+    const role =
+      guild.roles.cache.get(roleId) ||
+      (await guild.roles.fetch(roleId).catch(() => null));
     const botMember = await guild.members.fetchMe().catch(() => null);
 
     if (!target || !role || !botMember) {
-      await interaction.reply({ content: "I couldn't find the member, jail role, or bot permissions." });
+      await interaction.reply({
+        content: "I couldn't find the member, jail role, or bot permissions."
+      });
       return;
     }
 
@@ -165,7 +207,9 @@ async function handleJailCommand(interaction, client) {
       target.roles.highest.position >= botMember.roles.highest.position ||
       role.position >= botMember.roles.highest.position
     ) {
-      await interaction.reply({ content: "My role must be higher than the member and the jail role." });
+      await interaction.reply({
+        content: "My role must be higher than the member and the jail role."
+      });
       return;
     }
 
@@ -186,45 +230,75 @@ async function handleJailCommand(interaction, client) {
         reason = excluded.reason,
         jailed_at = excluded.jailed_at,
         release_at = excluded.release_at
-    `).run(target.id, guild.id, interaction.user.id, reason, jailedAt.toISOString(), releaseAtIso);
+    `).run(
+      target.id,
+      guild.id,
+      interaction.user.id,
+      reason,
+      jailedAt.toISOString(),
+      releaseAtIso
+    );
 
     scheduleJailRelease(client, guild.id, target.id, releaseAtIso);
 
     const releaseUnix = Math.floor(releaseAt.getTime() / 1000);
+
+    // 1. Funny public notice in the channel where /jail lock was run (e.g. #general)
     const mugshot = await renderJailMugshot({
       targetUser,
       moderatorUser: interaction.user,
       minutes,
-      reason,
-      releaseUnix
+      reason
     });
 
-    const jailEmbed = makeEmbed(
-      "🔒 WELCOME TO NEST JAIL",
-      `${target} has been sent to Nest Jail for **${minutes} minute(s)**.\n\n` +
-      `**Reason:** ${reason}\n` +
-      `**Release:** <t:${releaseUnix}:R>`,
+    const funnyLine = randomItem(PUBLIC_JAIL_LINES)
+      .replace("{target}", `${target}`)
+      .replace("{minutes}", String(minutes));
+
+    const publicEmbed = makeEmbed(
+      "🚨 OFF TO THE NAUGHTY NEST!",
+      `${funnyLine}\n\n` +
+        `**Offense:** ${reason}\n` +
+        `**Parole Hearing:** <t:${releaseUnix}:R>`,
       COLORS.crimson
     ).setImage(`attachment://${mugshot.fileName}`);
 
-    const jChanId = jailChannelId();
-    if (jChanId) {
-      const jailChan = guild.channels.cache.get(jChanId)
-        || await guild.channels.fetch(jChanId).catch(() => null);
-
-      if (jailChan && jailChan.isTextBased()) {
-        await jailChan.send({
-          content: `${target}`,
-          embeds: [jailEmbed],
-          files: [mugshot.attachment]
-        }).catch(() => {});
-      }
-    }
-
     await interaction.editReply({
-      embeds: [jailEmbed],
+      embeds: [publicEmbed],
       files: [mugshot.attachment]
     });
+
+    // 2. Silly "Welcome to the Naughty Nest" graphic inside the jail channel
+    const jChanId = jailChannelId();
+    if (jChanId) {
+      const jailChan =
+        guild.channels.cache.get(jChanId) ||
+        (await guild.channels.fetch(jChanId).catch(() => null));
+
+      if (jailChan && jailChan.isTextBased()) {
+        const sillyWelcome = await renderNaughtyNestWelcome({
+          targetUser,
+          minutes,
+          reason
+        });
+
+        const welcomeEmbed = makeEmbed(
+          "🪶 WELCOME TO THE NAUGHTY NEST!",
+          `Pull up a perch, ${target}! You're stuck in the coop for **${minutes} minute(s)**.\n\n` +
+            `**Why you're here:** ${reason}\n` +
+            `**Freedom unlocks:** <t:${releaseUnix}:R>`,
+          COLORS.burgundy
+        ).setImage(`attachment://${sillyWelcome.fileName}`);
+
+        await jailChan
+          .send({
+            content: `${target}`,
+            embeds: [welcomeEmbed],
+            files: [sillyWelcome.attachment]
+          })
+          .catch(err => console.error("Failed to send Naughty Nest welcome:", err));
+      }
+    }
     return;
   }
 
@@ -234,26 +308,30 @@ async function handleJailCommand(interaction, client) {
 
     await interaction.reply({
       content: released
-        ? `🔓 ${target} has been released from Nest Jail.`
+        ? `🕊️ ${target} has been pardoned and released from the Naughty Nest.`
         : "That member does not have an active jail sentence or the Jailbird role, or my role is not high enough to remove it."
     });
     return;
   }
 
   if (subcommand === "status") {
-    const sentences = db.prepare(`
-      SELECT * FROM jail_sentences WHERE guild_id = ? ORDER BY release_at ASC
-    `).all(interaction.guildId);
+    const sentences = db
+      .prepare(
+        `SELECT * FROM jail_sentences WHERE guild_id = ? ORDER BY release_at ASC`
+      )
+      .all(interaction.guildId);
 
     const lines = sentences.length
-      ? sentences.map(s => {
-          const unix = Math.floor(new Date(s.release_at).getTime() / 1000);
-          return `🔒 <@${s.user_id}> — Releases <t:${unix}:R> • *Reason:* ${s.reason} *(by <@${s.moderator_id}>)*`;
-        }).join("\n")
-      : "No members are currently serving time in Nest Jail.";
+      ? sentences
+          .map(s => {
+            const unix = Math.floor(new Date(s.release_at).getTime() / 1000);
+            return `🔒 <@${s.user_id}> — Releases <t:${unix}:R> • *Reason:* ${s.reason} *(by <@${s.moderator_id}>)*`;
+          })
+          .join("\n")
+      : "No birdbrains are currently serving time in the Naughty Nest.";
 
     await interaction.reply({
-      embeds: [makeEmbed("🔒 NEST JAIL ROSTER", lines, COLORS.charcoal)]
+      embeds: [makeEmbed("🔒 NAUGHTY NEST ROSTER", lines, COLORS.charcoal)]
     });
   }
 }
