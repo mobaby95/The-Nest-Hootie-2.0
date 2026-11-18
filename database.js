@@ -17,27 +17,52 @@ const db = new Database(databasePath);
 
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+db.pragma("busy_timeout = 5000");
 
 // ==========================================
-// 🪺 WELLNESS + 🦇 ARCADE TABLES
+// 🔧 SAFE MIGRATION HELPERS
+// ==========================================
+
+function hasColumn(table, column) {
+  return db.pragma(`table_info(${table})`)
+    .some(item => item.name === column);
+}
+
+function ensureColumn(table, column, definition) {
+  if (!hasColumn(table, column)) {
+    db.exec(
+      `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`
+    );
+
+    console.log(`🛠️ Added ${table}.${column}`);
+    return true;
+  }
+
+  return false;
+}
+
+// ==========================================
+// 🪺 CORE WELLNESS TABLES
 // ==========================================
 
 db.exec(`
-  -- MEMBERS
   CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     wellness_points INTEGER DEFAULT 0,
     lifetime_points INTEGER DEFAULT 0,
+    weekly_points INTEGER DEFAULT 0,
+    weekly_period TEXT,
     level INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- WELLNESS ACTIVITY
   CREATE TABLE IF NOT EXISTS wellness_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
     activity_type TEXT NOT NULL,
     activity_value TEXT,
+    activity_date TEXT,
+    points_awarded INTEGER NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -64,139 +89,27 @@ db.exec(`
     timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles',
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
-
-  -- WELLNESS BADGES AND CHALLENGES
-  CREATE TABLE IF NOT EXISTS user_badges (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    badge_id TEXT NOT NULL,
-    earned_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, badge_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS weekly_challenges (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    week_start TEXT NOT NULL,
-    challenge_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL,
-    activity_type TEXT NOT NULL,
-    target REAL NOT NULL,
-    reward_points INTEGER NOT NULL,
-    UNIQUE(week_start, challenge_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS user_challenge_completions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    week_start TEXT NOT NULL,
-    challenge_id TEXT NOT NULL,
-    completed_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, week_start, challenge_id)
-  );
-
-  -- ARCADE POINTS: SEPARATE FROM WELLNESS
-  CREATE TABLE IF NOT EXISTS arcade_points (
-    user_id TEXT PRIMARY KEY,
-    points INTEGER DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS arcade_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    points INTEGER NOT NULL,
-    reason TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS arcade_game_stats (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    game_name TEXT NOT NULL,
-    score INTEGER DEFAULT 0,
-    played_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );
-
-  -- LAST LETTER GAME
-  CREATE TABLE IF NOT EXISTS arcade_lastletter_state (
-    guild_id TEXT NOT NULL,
-    channel_id TEXT NOT NULL,
-    current_letter TEXT,
-    last_player_id TEXT,
-    used_words TEXT DEFAULT '[]',
-    round_count INTEGER DEFAULT 0,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (guild_id, channel_id)
-  );
-
-  -- COMMUNITY STORY GAME
-  CREATE TABLE IF NOT EXISTS arcade_story_contributions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    guild_id TEXT NOT NULL,
-    channel_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
-    contribution TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );
-
-  -- MADLIBS HISTORY
-  CREATE TABLE IF NOT EXISTS arcade_madlibs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    guild_id TEXT,
-    channel_id TEXT,
-    user_id TEXT NOT NULL,
-    story_text TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );
-
-  -- ORIGINAL COLLECTIBLE CREATURES
-  CREATE TABLE IF NOT EXISTS creature_catalog (
-    creature_id TEXT PRIMARY KEY,
-    creature_name TEXT NOT NULL,
-    creature_type TEXT NOT NULL,
-    rarity TEXT NOT NULL,
-    description TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS user_creatures (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    creature_id TEXT NOT NULL,
-    nickname TEXT,
-    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, creature_id)
-  );
-
-  -- MODERATION
-  CREATE TABLE IF NOT EXISTS jail_sentences (
-    user_id TEXT PRIMARY KEY,
-    guild_id TEXT NOT NULL,
-    moderator_id TEXT NOT NULL,
-    reason TEXT,
-    jailed_at TEXT NOT NULL,
-    release_at TEXT NOT NULL
-  );
 `);
 
-// ==========================================
-// 🔧 SAFE DATABASE MIGRATIONS
-// ==========================================
+// Preserve the original wellness_points column and migrate its
+// existing values into lifetime_points if that column is new.
+const addedLifetimePoints = ensureColumn(
+  "users",
+  "lifetime_points",
+  "INTEGER NOT NULL DEFAULT 0"
+);
 
-function ensureColumn(table, column, definition) {
-  const columns = db.pragma(`table_info(${table})`);
-
-  if (!columns.some(item => item.name === column)) {
-    db.exec(
-      `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`
-    );
-  }
-}
-
-// Existing Wellness scoring fields
 ensureColumn("users", "weekly_points", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("users", "weekly_period", "TEXT");
+ensureColumn("users", "level", "INTEGER NOT NULL DEFAULT 0");
 
-// Existing activity tracking fields
+if (addedLifetimePoints) {
+  db.exec(`
+    UPDATE users
+    SET lifetime_points = COALESCE(wellness_points, 0)
+  `);
+}
+
 ensureColumn("wellness_logs", "activity_date", "TEXT");
 ensureColumn(
   "wellness_logs",
@@ -204,7 +117,6 @@ ensureColumn(
   "INTEGER NOT NULL DEFAULT 0"
 );
 
-// Existing check-in fields
 ensureColumn("wellness_checkins", "timezone_used", "TEXT");
 ensureColumn(
   "wellness_checkins",
@@ -212,16 +124,10 @@ ensureColumn(
   "INTEGER NOT NULL DEFAULT 0"
 );
 
-// ==========================================
-// 📅 WELLNESS INDEXES
-// ==========================================
-
+// Backfill dates for existing activity records.
 db.exec(`
   UPDATE wellness_logs
-  SET activity_date = COALESCE(
-    activity_date,
-    substr(created_at, 1, 10)
-  )
+  SET activity_date = substr(created_at, 1, 10)
   WHERE activity_date IS NULL;
 
   CREATE INDEX IF NOT EXISTS idx_wellness_logs_user_date
@@ -243,7 +149,7 @@ const checkinsSchema = db.prepare(`
 `).get();
 
 if (
-  checkinsSchema &&
+  checkinsSchema?.sql &&
   checkinsSchema.sql
     .replace(/\s+/g, "")
     .toUpperCase()
@@ -297,13 +203,10 @@ if (
     `);
   })();
 
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_wellness_checkins_user_date
-    ON wellness_checkins(user_id, checkin_date);
-  `);
+  console.log("🛠️ Legacy check-in table migrated.");
 }
 
-// Only one rewarded check-in per user per local date
+// One rewarded check-in per user per local date.
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_wellness_daily_reward
   ON wellness_checkins(user_id, checkin_date)
@@ -311,7 +214,159 @@ db.exec(`
 `);
 
 // ==========================================
-// 🐉 ORIGINAL NEST CREATURE CATALOG
+// 🏅 BADGES + WEEKLY CHALLENGES
+// ==========================================
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_badges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    badge_id TEXT NOT NULL,
+    earned_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, badge_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS weekly_challenges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start TEXT NOT NULL,
+    challenge_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    target REAL NOT NULL,
+    reward_points INTEGER NOT NULL,
+    UNIQUE(week_start, challenge_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS user_challenge_completions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    week_start TEXT NOT NULL,
+    challenge_id TEXT NOT NULL,
+    completed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, week_start, challenge_id)
+  );
+`);
+
+// ==========================================
+// 🦇 ARCADE TABLES
+// ==========================================
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS arcade_points (
+    user_id TEXT PRIMARY KEY,
+    points INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS arcade_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    points INTEGER NOT NULL,
+    reason TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS arcade_game_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    game_name TEXT NOT NULL,
+    score INTEGER DEFAULT 0,
+    played_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS arcade_lastletter_state (
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    current_letter TEXT,
+    last_player_id TEXT,
+    used_words TEXT DEFAULT '[]',
+    round_count INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guild_id, channel_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS arcade_story_contributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    contribution TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS arcade_madlibs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id TEXT,
+    channel_id TEXT,
+    user_id TEXT NOT NULL,
+    story_text TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// ==========================================
+// 🐉 CREATURE COLLECTION
+// ==========================================
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS creature_catalog (
+    creature_id TEXT PRIMARY KEY,
+    creature_name TEXT NOT NULL,
+    creature_type TEXT NOT NULL,
+    rarity TEXT NOT NULL,
+    description TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS user_creatures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    creature_id TEXT NOT NULL,
+    nickname TEXT,
+    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, creature_id)
+  );
+
+  -- One configured spawn channel per server.
+  CREATE TABLE IF NOT EXISTS creature_spawn_channels (
+    guild_id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  -- Persist active spawns so they survive Railway restarts.
+  CREATE TABLE IF NOT EXISTS creature_spawns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    creature_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    spawned_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    caught_by TEXT,
+    caught_at TEXT,
+    message_id TEXT
+  );
+
+  -- Each member gets only one attempt per spawn.
+  CREATE TABLE IF NOT EXISTS creature_spawn_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    spawn_id INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    success INTEGER NOT NULL DEFAULT 0,
+    attempted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(spawn_id, user_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_creature_spawns_status
+  ON creature_spawns(status, expires_at);
+
+  CREATE INDEX IF NOT EXISTS idx_creature_attempts_spawn
+  ON creature_spawn_attempts(spawn_id);
+`);
+
+// ==========================================
+// 🐉 ORIGINAL CREATURE CATALOG
 // ==========================================
 
 const creatures = [
@@ -390,16 +445,32 @@ const insertCreature = db.prepare(`
   )
 `);
 
-const seedCreatures = db.transaction(() => {
+db.transaction(() => {
   for (const creature of creatures) {
     insertCreature.run(creature);
   }
-});
-
-seedCreatures();
+})();
 
 // ==========================================
-// 📊 ARCADE INDEXES
+// 🔒 MODERATION
+// ==========================================
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS jail_sentences (
+    user_id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    moderator_id TEXT NOT NULL,
+    reason TEXT,
+    jailed_at TEXT NOT NULL,
+    release_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_jail_release_at
+  ON jail_sentences(release_at);
+`);
+
+// ==========================================
+// 📊 PERFORMANCE INDEXES
 // ==========================================
 
 db.exec(`
@@ -417,6 +488,12 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_user_creatures_user
   ON user_creatures(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_badges_user
+  ON user_badges(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_challenges_week
+  ON weekly_challenges(week_start);
 `);
 
 // ==========================================
@@ -426,7 +503,9 @@ db.exec(`
 console.log("🖤 HOOTIE DATABASE CONNECTED");
 console.log("Database location: " + databasePath);
 console.log("🪺 Wellness database ready");
+console.log("🏅 Badges and challenges ready");
 console.log("🦇 Arcade database ready");
-console.log("🐉 Original creature catalog ready");
+console.log("🐉 Creature collection and spawn database ready");
+console.log("🔒 Jail database ready");
 
 module.exports = db;
