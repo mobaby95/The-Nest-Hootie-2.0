@@ -72,15 +72,6 @@ const RARITY_THEMES = {
   }
 };
 
-const TYPE_ICONS = {
-  Shadow: "🌑",
-  Fire: "🔥",
-  Moon: "🌙",
-  Nature: "🌿",
-  Spirit: "👻",
-  Starlight: "✨"
-};
-
 function findCreatureAsset(creatureId) {
   const dir = path.join(__dirname, "assets", "creatures");
   if (!fs.existsSync(dir)) return null;
@@ -132,10 +123,6 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
-/**
- * Generates a 600x840 trading card PNG AttachmentBuilder.
- * mode: "spawn" | "caught" | "profile"
- */
 async function renderCreatureCard(creature, options = {}) {
   const {
     mode = "spawn",
@@ -167,7 +154,7 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.fillStyle = "#16141C";
   ctx.fill();
 
-  // Subtle holographic diagonal shimmer for Ultra Rare / Legendary / Mythic
+  // Subtle holographic diagonal shimmer
   if (theme.holo) {
     ctx.save();
     roundRect(ctx, 18, 18, width - 36, height - 36, 22);
@@ -192,14 +179,14 @@ async function renderCreatureCard(creature, options = {}) {
 
   // Creature Name
   ctx.fillStyle = "#FFFFFF";
-  ctx.font = `bold 30px "${CARD_FONT}"`;
+  ctx.font = `bold 30px ${CARD_FONT}`;
   ctx.textBaseline = "middle";
   ctx.fillText(creature.creature_name, 52, 68);
 
   // Type Pill on Right of Header
   const typeLabel = `${creature.creature_type.toUpperCase()}`;
-  ctx.font = `bold 16px "${CARD_FONT}"`;
-  const pillW = ctx.measureText(typeLabel).width + 32;
+  ctx.font = `bold 16px ${CARD_FONT}`;
+  const pillW = Math.max(ctx.measureText(typeLabel).width + 32, 80);
   const pillX = width - 50 - pillW;
   roundRect(ctx, pillX, 49, pillW, 38, 19);
   ctx.fillStyle = theme.badgeBg;
@@ -233,31 +220,31 @@ async function renderCreatureCard(creature, options = {}) {
     ctx.fillStyle = "#24202E";
     ctx.fillRect(artX, artY, artW, artH);
     ctx.fillStyle = theme.accent;
-    ctx.font = `bold 24px "${CARD_FONT}"`;
+    ctx.font = `bold 24px ${CARD_FONT}`;
     ctx.textAlign = "center";
     ctx.fillText("ARTWORK PENDING", width / 2, artY + artH / 2);
     ctx.textAlign = "left";
   }
   ctx.restore();
 
-  // Artwork Gold/Rarity Inner Border
+  // Artwork Inner Border
   roundRect(ctx, artX, artY, artW, artH, 16);
   ctx.lineWidth = 3;
   ctx.strokeStyle = theme.borderPrimary;
   ctx.stroke();
 
-  // Rarity Ribbon Strip below Artwork
+  // Rarity Ribbon Strip
   roundRect(ctx, 34, 552, width - 68, 42, 10);
   ctx.fillStyle = theme.headerBg;
   ctx.fill();
 
   ctx.fillStyle = theme.accent;
-  ctx.font = `bold 18px "${CARD_FONT}"`;
+  ctx.font = `bold 18px ${CARD_FONT}`;
   ctx.fillText(`${creature.rarity.toUpperCase()}  •  ${theme.stars}`, 50, 573);
 
   ctx.textAlign = "right";
   ctx.fillStyle = "#A0AEC0";
-  ctx.font = `bold 15px "${CARD_FONT}"`;
+  ctx.font = `bold 15px ${CARD_FONT}`;
   ctx.fillText("THE HOLLOW ARCHIVES", width - 50, 573);
   ctx.textAlign = "left";
 
@@ -270,7 +257,7 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.stroke();
 
   ctx.fillStyle = "#E2E8F0";
-  ctx.font = `19px "${CARD_FONT}"`;
+  ctx.font = `19px ${CARD_FONT}`;
   const loreLines = wrapText(ctx, creature.description, width - 104).slice(0, 3);
   loreLines.forEach((line, idx) => {
     ctx.fillText(line, 52, 640 + idx * 28);
@@ -287,12 +274,12 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.textAlign = "center";
   if (mode === "spawn") {
     ctx.fillStyle = "#FFFFFF";
-    ctx.font = `bold 22px "${CARD_FONT}"`;
-    ctx.fillText("⚡ FIRST TO TYPE  catch  IN CHAT CLAIMS IT!", width / 2, 772);
+    ctx.font = `bold 22px ${CARD_FONT}`;
+    ctx.fillText("FIRST TO TYPE  catch  IN CHAT CLAIMS IT!", width / 2, 772);
   } else if (mode === "caught") {
     const sec = catchTimeMs != null ? `${(catchTimeMs / 1000).toFixed(2)}s` : "";
     ctx.fillStyle = "#FFFFFF";
-    ctx.font = `bold 20px "${CARD_FONT}"`;
+    ctx.font = `bold 20px ${CARD_FONT}`;
     ctx.fillText(
       `CAUGHT BY ${(catcherName || "OWL").toUpperCase()}  •  ${sec}  •  OWNED: x${ownedCount}`,
       width / 2,
@@ -301,7 +288,7 @@ async function renderCreatureCard(creature, options = {}) {
   } else {
     const best = fastestMs != null ? `BEST: ${(fastestMs / 1000).toFixed(2)}s` : "UNCAUGHT";
     ctx.fillStyle = theme.accent;
-    ctx.font = `bold 20px "${CARD_FONT}"`;
+    ctx.font = `bold 20px ${CARD_FONT}`;
     ctx.fillText(
       `OWNED: x${ownedCount}   •   ${best}`,
       width / 2,
