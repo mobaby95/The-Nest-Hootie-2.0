@@ -228,7 +228,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName("jail")
     .setDescription("Manage Nest Jail sentences (Manage Roles)")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+    new SlashCommandBuilder()
+    .setName("jail")
+    .setDescription("Manage Nest Jail sentences (Moderators & Admins only)")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+    .setDMPermission(false)
+    .addSubcommand(sub =>
     .addSubcommand(sub =>
       sub
         .setName("lock")
