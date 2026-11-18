@@ -79,10 +79,18 @@ const commands = [
     .setName("arcade")
     .setDescription("Enter Hootie's spooky little arcade 🦇"),
 
+  // LAST LETTER — SLASH COMMANDS ONLY START AND STOP THE GAME
   new SlashCommandBuilder()
     .setName("lastletter")
-    .setDescription("Play Last Letter with the Nest 📝")
-    .addStringOption(o => o.setName("word").setDescription("Enter a word to play").setRequired(true).setMaxLength(30)),
+    .setDescription("Start or stop Last Letter in this channel 📝")
+    .addSubcommand(s =>
+      s.setName("start")
+        .setDescription("Start a new Last Letter game")
+    )
+    .addSubcommand(s =>
+      s.setName("stop")
+        .setDescription("Stop the Last Letter game")
+    ),
 
   new SlashCommandBuilder()
     .setName("madlibs")
