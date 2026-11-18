@@ -15,7 +15,11 @@ const {
   AttachmentBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  PermissionFlagsBits
 } = require("discord.js");
 
 if (!process.env.DISCORD_TOKEN) {
@@ -31,7 +35,7 @@ if (!process.env.CLIENT_ID) {
 // ==========================================
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
 const rest = new REST({ version: "10" })
@@ -48,42 +52,12 @@ const COLORS = {
 const FOOTER = "Hootie 2.0 • Where the night owls thrive 🖤";
 
 const LEVELS = [
-  {
-    name: "Midnight Hatchling",
-    emoji: "🐣",
-    points: 0,
-    image: "midnight-hatchling.png"
-  },
-  {
-    name: "Moonlit Familiar",
-    emoji: "🌙",
-    points: 100,
-    image: "moonlit-familiar.png"
-  },
-  {
-    name: "Velvet Night Owl",
-    emoji: "🦉",
-    points: 250,
-    image: "velvet-night-owl.png"
-  },
-  {
-    name: "Crimson Oracle",
-    emoji: "🔮",
-    points: 500,
-    image: "crimson-oracle.png"
-  },
-  {
-    name: "Shadow Guardian",
-    emoji: "🖤",
-    points: 1000,
-    image: "shadow-guardian.png"
-  },
-  {
-    name: "Elder of the Hollow",
-    emoji: "👑",
-    points: 2000,
-    image: "elder-of-the-hollow.png"
-  }
+  { name: "Midnight Hatchling", emoji: "🐣", points: 0, image: "midnight-hatchling.png" },
+  { name: "Moonlit Familiar", emoji: "🌙", points: 100, image: "moonlit-familiar.png" },
+  { name: "Velvet Night Owl", emoji: "🦉", points: 250, image: "velvet-night-owl.png" },
+  { name: "Crimson Oracle", emoji: "🔮", points: 500, image: "crimson-oracle.png" },
+  { name: "Shadow Guardian", emoji: "🖤", points: 1000, image: "shadow-guardian.png" },
+  { name: "Elder of the Hollow", emoji: "👑", points: 2000, image: "elder-of-the-hollow.png" }
 ];
 
 const BADGES = [
@@ -103,9 +77,9 @@ const CHALLENGE_TEMPLATES = [
   {
     id: "water_week",
     title: "The Moonwell",
-    description: "Drink 10,000 ml of water this week.",
+    description: "Drink 42.3 cups of water this week.",
     type: "water",
-    target: 10000,
+    target: 42.3,
     reward: 25
   },
   {
@@ -151,25 +125,30 @@ const CHALLENGE_TEMPLATES = [
 ];
 
 const TIMEZONES = [
-  "America/Los_Angeles",
-  "America/Denver",
-  "America/Chicago",
-  "America/New_York",
-  "America/Phoenix",
-  "America/Anchorage",
-  "Pacific/Honolulu",
-  "Europe/London",
-  "Europe/Paris",
-  "Asia/Tokyo",
-  "Australia/Sydney",
-  "UTC"
+  "America/Los_Angeles", "America/Denver", "America/Chicago",
+  "America/New_York", "America/Phoenix", "America/Anchorage",
+  "Pacific/Honolulu", "Europe/London", "Europe/Paris",
+  "Asia/Tokyo", "Australia/Sydney", "UTC"
 ];
+
+const CREATURE_CATCH_CHANCES = {
+  Common: 80,
+  Uncommon: 65,
+  Rare: 45,
+  Legendary: 25
+};
+
+const SPAWN_MIN_MS = 20 * 60 * 1000;
+const SPAWN_MAX_MS = 40 * 60 * 1000;
+const SPAWN_LIFETIME_MS = 5 * 60 * 1000;
+
+let spawnTimer = null;
 
 // ==========================================
 // 🌙 GENERAL HELPERS
 // ==========================================
 
-function embed(title, description, color = COLORS.burgundy) {
+function makeEmbed(title, description, color = COLORS.burgundy) {
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(title)
@@ -204,8 +183,13 @@ function weekStart(dateString) {
 
 function ensureUser(userId) {
   db.prepare(`
-    INSERT OR IGNORE INTO users (user_id)
-    VALUES (?)
+    INSERT OR IGNORE INTO users (
+      user_id,
+      wellness_points,
+      lifetime_points,
+      weekly_points
+    )
+    VALUES (?, 0, 0, 0)
   `).run(userId);
 
   db.prepare(`
@@ -249,8 +233,7 @@ function resetWeeklyPoints(userId, period) {
 }
 
 function getLevel(points) {
-  return [...LEVELS]
-    .reverse()
+  return [...LEVELS].reverse()
     .find(level => points >= level.points) || LEVELS[0];
 }
 
@@ -258,11 +241,22 @@ function nextLevel(points) {
   return LEVELS.find(level => level.points > points) || null;
 }
 
+function progressBar(current, target, size = 12) {
+  const filled = Math.max(
+    0,
+    Math.min(size, Math.floor((current / target) * size))
+  );
+
+  return "▰".repeat(filled) + "▱".repeat(size - filled);
+}
+
 // ==========================================
-// 🪺 WELLNESS POINTS + 🦉 OWL XP
+// 🪺 WELLNESS POINTS + OWL XP
 // ==========================================
 
 function addWellnessPoints(userId, amount) {
+  ensureUser(userId);
+
   const period = weekStart(localDate(getTimezone(userId)));
 
   resetWeeklyPoints(userId, period);
@@ -270,9 +264,10 @@ function addWellnessPoints(userId, amount) {
   db.prepare(`
     UPDATE users
     SET weekly_points = weekly_points + ?,
-        lifetime_points = lifetime_points + ?
+        lifetime_points = lifetime_points + ?,
+        wellness_points = wellness_points + ?
     WHERE user_id = ?
-  `).run(amount, amount, userId);
+  `).run(amount, amount, amount, userId);
 }
 
 // ==========================================
@@ -356,17 +351,13 @@ function awardBadges(userId) {
     sleep_10: counts.sleep >= 10,
 
     selfcare_10: db.prepare(`
-      SELECT COUNT(*) AS n
-      FROM wellness_logs
-      WHERE user_id = ?
-        AND activity_type = 'selfcare'
+      SELECT COUNT(*) AS n FROM wellness_logs
+      WHERE user_id = ? AND activity_type = 'selfcare'
     `).get(userId).n >= 10,
 
     workout_10: db.prepare(`
-      SELECT COUNT(*) AS n
-      FROM wellness_logs
-      WHERE user_id = ?
-        AND activity_type = 'workout'
+      SELECT COUNT(*) AS n FROM wellness_logs
+      WHERE user_id = ? AND activity_type = 'workout'
     `).get(userId).n >= 10,
 
     challenge_1: db.prepare(`
@@ -528,17 +519,8 @@ function recordActivity(userId, type, value) {
 }
 
 // ==========================================
-// 📊 DASHBOARD HELPERS
+// 🦉 OWL EVOLUTION DASHBOARD
 // ==========================================
-
-function progressBar(current, target, size = 12) {
-  const filled = Math.max(
-    0,
-    Math.min(size, Math.floor((current / target) * size))
-  );
-
-  return "▰".repeat(filled) + "▱".repeat(size - filled);
-}
 
 function rankAttachment(points) {
   const rank = getLevel(points);
@@ -601,10 +583,9 @@ function dashboardEmbed(user, stats, tab = "overview") {
     description += "\n👑 You have reached the highest rank.";
   }
 
-  const e = embed(
+  const e = makeEmbed(
     `${user.username}'s Nest Archives`,
-    description,
-    COLORS.burgundy
+    description
   );
 
   if (tab === "overview") {
@@ -637,9 +618,7 @@ function dashboardEmbed(user, stats, tab = "overview") {
 
     e.setDescription(
       rows.length
-        ? rows.map(row =>
-            `**${row.activity_type}** · ${row.n} logs`
-          ).join("\n")
+        ? rows.map(row => `**${row.activity_type}** · ${row.n} logs`).join("\n")
         : "No activities logged yet. Your story is just beginning."
     );
   }
@@ -695,17 +674,14 @@ function dashboardButtons() {
       .setCustomId("hootie:overview")
       .setLabel("Overview")
       .setStyle(ButtonStyle.Primary),
-
     new ButtonBuilder()
       .setCustomId("hootie:activities")
       .setLabel("Activities")
       .setStyle(ButtonStyle.Secondary),
-
     new ButtonBuilder()
       .setCustomId("hootie:badges")
       .setLabel("Badges")
       .setStyle(ButtonStyle.Secondary),
-
     new ButtonBuilder()
       .setCustomId("hootie:challenges")
       .setLabel("Challenges")
@@ -728,44 +704,768 @@ function dashboardPayload(user, stats, tab = "overview") {
   };
 }
 
+// Other members' wellness pages show achievements only.
+// They never expose detailed activity logs or private reflections.
+function publicWellnessEmbed(user, stats) {
+  const points = stats.lifetime_points || 0;
+  const rank = getLevel(points);
+
+  const badges = db.prepare(`
+    SELECT badge_id
+    FROM user_badges
+    WHERE user_id = ?
+    ORDER BY earned_at DESC
+  `).all(user.id);
+
+  const badgeNames = badges.map(row =>
+    BADGES.find(badge => badge[0] === row.badge_id)?.[1] || row.badge_id
+  );
+
+  return makeEmbed(
+    `🪺 ${user.username}'s Public Nest Profile`,
+    `${rank.emoji} **${rank.name}**\n` +
+    `Lifetime Owl XP: **${points}**\n` +
+    `🔥 Current streak: **${stats.current_streak || 0} days**\n` +
+    `🏆 Longest streak: **${stats.longest_streak || 0} days**\n\n` +
+    `**Achievements**\n` +
+    (badgeNames.length
+      ? badgeNames.map(name => `🏅 ${name}`).join("\n")
+      : "This owl's collection of badges is just beginning."),
+    COLORS.burgundy
+  );
+}
+
 // ==========================================
-// 🦇 MIDNIGHT ARCADE MENU
+// 🦇 ARCADE MENU + MADLIBS MODAL
 // ==========================================
 
 async function showArcade(interaction) {
-  const e = embed(
-    "🦇 The Midnight Arcade",
-    "Choose a game and let the mischief begin.\n\n" +
-    "**WORD GAMES**\n" +
-    "`/lastletter` — Keep the word chain alive.\n" +
-    "`/madlibs` — Summon a ridiculous little story.\n" +
-    "`/story contribution` — Add a line to the community tale.\n\n" +
-    "**COLLECTIBLES**\n" +
-    "`/creatures collection` — View your companions.\n" +
-    "`/creatures discover` — Search the Hollow for a creature.\n" +
-    "`/creatures profile` — Inspect a creature.\n\n" +
-    "`/arcadeleaderboard` — See the arcade high scores.\n\n" +
-    "Arcade Points are separate from Wellness Points and Owl XP.",
-    COLORS.charcoal
-  );
-
   await interaction.reply({
-    embeds: [e],
+    embeds: [
+      makeEmbed(
+        "🦇 The Midnight Arcade",
+        "**WORD GAMES**\n" +
+        "`/lastletter` — Keep the word chain alive.\n" +
+        "`/madlibs` — Create a ridiculous community story.\n" +
+        "`/story` — Add a line to the community tale.\n\n" +
+        "**COLLECTIBLES**\n" +
+        "`/creatures collection` — View your companions.\n" +
+        "`/creatures profile` — Inspect a creature.\n" +
+        "`/catch` — Try to catch a wild creature.\n\n" +
+        "`/arcadeleaderboard` — See the arcade high scores.\n\n" +
+        "Arcade Points are separate from Wellness Points and Owl XP.",
+        COLORS.charcoal
+      )
+    ],
     ephemeral: true
   });
 }
 
+function madlibsModal() {
+  const modal = new ModalBuilder()
+    .setCustomId("hootie:madlibs")
+    .setTitle("Create a Nest Madlib");
+
+  const fields = [
+    ["noun", "A noun", "Example: pumpkin"],
+    ["adjective", "An adjective", "Example: suspicious"],
+    ["verb", "A verb", "Example: moonwalk"],
+    ["place", "A place", "Example: haunted library"],
+    ["exclamation", "An exclamation", "Example: THE SNACKS!"]
+  ];
+
+  const rows = fields.map(([id, label, placeholder]) => {
+    const input = new TextInputBuilder()
+      .setCustomId(id)
+      .setLabel(label)
+      .setPlaceholder(placeholder)
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setMaxLength(60);
+
+    return new ActionRowBuilder().addComponents(input);
+  });
+
+  modal.addComponents(...rows);
+  return modal;
+}
+
+function makeMadlib(values) {
+  return (
+    `At the edge of the Hollow, a **${values.adjective} ${values.noun}** ` +
+    `decided to **${values.verb}** inside the **${values.place}**.\n\n` +
+    `Suddenly, a tiny owl appeared and shouted, “**${values.exclamation}**”\n\n` +
+    `And that is how the legend began.`
+  );
+}
+
 // ==========================================
-// 🦉 DISCORD INTERACTIONS
+// 🐉 CREATURE SPAWNING SYSTEM
+// ==========================================
+
+function randomSpawnDelay() {
+  return Math.floor(
+    SPAWN_MIN_MS + Math.random() * (SPAWN_MAX_MS - SPAWN_MIN_MS)
+  );
+}
+
+function scheduleNextSpawn() {
+  if (spawnTimer) clearTimeout(spawnTimer);
+
+  spawnTimer = setTimeout(async () => {
+    try {
+      const servers = db.prepare(`
+        SELECT guild_id, channel_id
+        FROM creature_spawn_channels
+        WHERE enabled = 1
+      `).all();
+
+      for (const server of servers) {
+        await spawnCreature(server.guild_id, server.channel_id);
+      }
+    } catch (error) {
+      console.error("Automatic creature spawn error:", error);
+    }
+
+    scheduleNextSpawn();
+  }, randomSpawnDelay());
+}
+
+async function spawnCreature(guildId, channelId) {
+  const active = db.prepare(`
+    SELECT id
+    FROM creature_spawns
+    WHERE guild_id = ?
+      AND status = 'active'
+      AND expires_at > ?
+    LIMIT 1
+  `).get(guildId, new Date().toISOString());
+
+  if (active) return false;
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+
+  if (!channel || !channel.isTextBased()) {
+    console.log(`Creature spawn channel unavailable for server ${guildId}`);
+    return false;
+  }
+
+  const creature = randomItem(
+    db.prepare(`SELECT * FROM creature_catalog`).all()
+  );
+
+  const now = new Date();
+  const expires = new Date(now.getTime() + SPAWN_LIFETIME_MS);
+
+  const result = db.prepare(`
+    INSERT INTO creature_spawns (
+      guild_id,
+      channel_id,
+      creature_id,
+      status,
+      spawned_at,
+      expires_at
+    )
+    VALUES (?, ?, ?, 'active', ?, ?)
+  `).run(
+    guildId,
+    channelId,
+    creature.creature_id,
+    now.toISOString(),
+    expires.toISOString()
+  );
+
+  const spawnId = Number(result.lastInsertRowid);
+
+  const message = await channel.send({
+    embeds: [
+      makeEmbed(
+        "🌲 A WILD CREATURE HAS APPEARED!",
+        `Something is moving in the Hollow...\n\n` +
+        `**${creature.creature_name}**\n` +
+        `*${creature.rarity} ${creature.creature_type}*\n\n` +
+        `${creature.description}\n\n` +
+        "Use **/catch** to try to catch it!\n" +
+        "The first successful catch wins. You have five minutes.",
+        COLORS.crimson
+      )
+    ]
+  });
+
+  db.prepare(`
+    UPDATE creature_spawns
+    SET message_id = ?
+    WHERE id = ?
+  `).run(message.id, spawnId);
+
+  setTimeout(() => {
+    const result = db.prepare(`
+      UPDATE creature_spawns
+      SET status = 'expired'
+      WHERE id = ?
+        AND status = 'active'
+    `).run(spawnId);
+
+    if (result.changes) {
+      channel.send({
+        content: `🌙 **${creature.creature_name}** slipped back into the Hollow. Better luck next time!`
+      }).catch(() => {});
+    }
+  }, SPAWN_LIFETIME_MS);
+
+  return true;
+}
+
+function restoreCreatureSpawns() {
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    UPDATE creature_spawns
+    SET status = 'expired'
+    WHERE status = 'active'
+      AND expires_at <= ?
+  `).run(now);
+
+  scheduleNextSpawn();
+}
+
+async function handleCreatureCommand(interaction) {
+  const subcommand = interaction.options.getSubcommand();
+  const userId = interaction.user.id;
+  const guildId = interaction.guildId;
+
+  if (subcommand === "collection") {
+    const rows = db.prepare(`
+      SELECT c.*, uc.discovered_at
+      FROM user_creatures uc
+      JOIN creature_catalog c
+        ON c.creature_id = uc.creature_id
+      WHERE uc.user_id = ?
+      ORDER BY
+        CASE c.rarity
+          WHEN 'Legendary' THEN 1
+          WHEN 'Rare' THEN 2
+          WHEN 'Uncommon' THEN 3
+          ELSE 4
+        END,
+        c.creature_name
+    `).all(userId);
+
+    const total = db.prepare(`
+      SELECT COUNT(*) AS n FROM creature_catalog
+    `).get().n;
+
+    const description = rows.length
+      ? rows.map(creature =>
+          `**${creature.creature_name}** · ${creature.rarity} ${creature.creature_type}`
+        ).join("\n")
+      : "Your collection is waiting for its first visitor. Keep an eye out for wild spawns!";
+
+    await interaction.reply({
+      embeds: [
+        makeEmbed(
+          `🐉 ${interaction.user.username}'s Hollow Companions`,
+          `${description}\n\n**Collection:** ${rows.length}/${total}`,
+          COLORS.charcoal
+        )
+      ],
+      ephemeral: true
+    });
+
+    return;
+  }
+
+  if (subcommand === "profile") {
+    const name = interaction.options.getString("creature", true).trim();
+
+    const creature = db.prepare(`
+      SELECT *
+      FROM creature_catalog
+      WHERE lower(creature_name) = lower(?)
+         OR lower(creature_id) = lower(?)
+    `).get(name, name);
+
+    if (!creature) {
+      await interaction.reply({
+        content: "I couldn't find that creature in the Hollow catalog.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    const owned = db.prepare(`
+      SELECT 1
+      FROM user_creatures
+      WHERE user_id = ?
+        AND creature_id = ?
+    `).get(userId, creature.creature_id);
+
+    await interaction.reply({
+      embeds: [
+        makeEmbed(
+          `🐉 ${creature.creature_name}`,
+          `**Type:** ${creature.creature_type}\n` +
+          `**Rarity:** ${creature.rarity}\n` +
+          `**In your collection:** ${owned ? "Yes!" : "Not yet"}\n\n` +
+          creature.description,
+          COLORS.charcoal
+        )
+      ],
+      ephemeral: true
+    });
+
+    return;
+  }
+
+  if (["setchannel", "start", "stop", "spawn"].includes(subcommand)) {
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.reply({
+        content: "Only members with Manage Server permission can manage creature spawns.",
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (subcommand === "setchannel") {
+      const channel = interaction.options.getChannel("channel", true);
+
+      if (!channel.isTextBased()) {
+        await interaction.reply({
+          content: "Please choose a text channel.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      db.prepare(`
+        INSERT INTO creature_spawn_channels (
+          guild_id,
+          channel_id,
+          enabled,
+          updated_at
+        )
+        VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+        ON CONFLICT(guild_id) DO UPDATE SET
+          channel_id = excluded.channel_id,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(guildId, channel.id);
+
+      await interaction.reply({
+        content: `🌲 Creature spawn channel set to ${channel}. Use \`/creatures start\` when you're ready.`,
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    if (subcommand === "start") {
+      const config = db.prepare(`
+        SELECT channel_id
+        FROM creature_spawn_channels
+        WHERE guild_id = ?
+      `).get(guildId);
+
+      if (!config) {
+        await interaction.reply({
+          content: "Set a spawn channel first with `/creatures setchannel`.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      db.prepare(`
+        UPDATE creature_spawn_channels
+        SET enabled = 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE guild_id = ?
+      `).run(guildId);
+
+      await interaction.reply({
+        content: "🦇 Automatic creature spawning is now active! Wild creatures will appear every 20–40 minutes.",
+        ephemeral: true
+      });
+
+      await spawnCreature(guildId, config.channel_id);
+      return;
+    }
+
+    if (subcommand === "stop") {
+      db.prepare(`
+        UPDATE creature_spawn_channels
+        SET enabled = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE guild_id = ?
+      `).run(guildId);
+
+      await interaction.reply({
+        content: "🌙 Automatic creature spawning has been paused.",
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    if (subcommand === "spawn") {
+      const config = db.prepare(`
+        SELECT channel_id
+        FROM creature_spawn_channels
+        WHERE guild_id = ?
+      `).get(guildId);
+
+      if (!config) {
+        await interaction.reply({
+          content: "Set a spawn channel first with `/creatures setchannel`.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+
+      const spawned = await spawnCreature(guildId, config.channel_id);
+
+      await interaction.editReply(
+        spawned
+          ? "✨ A creature has been spawned in the configured channel!"
+          : "There is already an active creature, or the spawn channel is unavailable."
+      );
+
+      return;
+    }
+  }
+}
+
+// ==========================================
+// 🪤 CATCH SYSTEM
+// ==========================================
+
+function attemptCatch(userId, guildId, channelId) {
+  const now = new Date().toISOString();
+
+  const spawn = db.prepare(`
+    SELECT s.*, c.creature_name, c.creature_type, c.rarity, c.description
+    FROM creature_spawns s
+    JOIN creature_catalog c ON c.creature_id = s.creature_id
+    WHERE s.guild_id = ?
+      AND s.channel_id = ?
+      AND s.status = 'active'
+      AND s.expires_at > ?
+    ORDER BY s.id DESC
+    LIMIT 1
+  `).get(guildId, channelId, now);
+
+  if (!spawn) {
+    return { result: "none" };
+  }
+
+  const transaction = db.transaction(() => {
+    const alreadyTried = db.prepare(`
+      SELECT 1
+      FROM creature_spawn_attempts
+      WHERE spawn_id = ?
+        AND user_id = ?
+    `).get(spawn.id, userId);
+
+    if (alreadyTried) {
+      return { result: "tried", spawn };
+    }
+
+    const stillActive = db.prepare(`
+      SELECT 1
+      FROM creature_spawns
+      WHERE id = ?
+        AND status = 'active'
+        AND expires_at > ?
+    `).get(spawn.id, now);
+
+    if (!stillActive) {
+      return { result: "gone", spawn };
+    }
+
+    const chance = CREATURE_CATCH_CHANCES[spawn.rarity] || 50;
+    const success = Math.random() * 100 < chance;
+
+    db.prepare(`
+      INSERT INTO creature_spawn_attempts (
+        spawn_id,
+        user_id,
+        success
+      )
+      VALUES (?, ?, ?)
+    `).run(spawn.id, userId, success ? 1 : 0);
+
+    if (!success) {
+      return { result: "failed", spawn, chance };
+    }
+
+    const claimed = db.prepare(`
+      UPDATE creature_spawns
+      SET status = 'caught',
+          caught_by = ?,
+          caught_at = ?
+      WHERE id = ?
+        AND status = 'active'
+        AND expires_at > ?
+    `).run(userId, now, spawn.id, now);
+
+    if (!claimed.changes) {
+      return { result: "lost", spawn };
+    }
+
+    const added = db.prepare(`
+      INSERT OR IGNORE INTO user_creatures (user_id, creature_id)
+      VALUES (?, ?)
+    `).run(userId, spawn.creature_id);
+
+    return {
+      result: "caught",
+      spawn,
+      added: added.changes > 0
+    };
+  });
+
+  return transaction();
+}
+
+// ==========================================
+// 🔒 JAIL SYSTEM
+// ==========================================
+
+function jailRoleId() {
+  return process.env.JAILBIRD_ROLE_ID;
+}
+
+async function handleJail(interaction) {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
+    await interaction.reply({
+      content: "You need Manage Roles permission to use Nest Jail.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const roleId = jailRoleId();
+
+  if (!roleId) {
+    await interaction.reply({
+      content: "The JAILBIRD_ROLE_ID environment variable is missing in Railway.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const targetUser = interaction.options.getUser("member", true);
+  const minutes = interaction.options.getInteger("minutes", true);
+  const reason = interaction.options.getString("reason") || "No reason provided.";
+
+  if (targetUser.id === interaction.user.id) {
+    await interaction.reply({
+      content: "You cannot send yourself to Nest Jail.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (targetUser.id === client.user.id) {
+    await interaction.reply({
+      content: "Hootie cannot be jailed. Who would run the Nest?",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const guild = interaction.guild;
+  const target = await guild.members.fetch(targetUser.id).catch(() => null);
+  const role = guild.roles.cache.get(roleId);
+  const botMember = guild.members.me;
+
+  if (!target || !role || !botMember) {
+    await interaction.reply({
+      content: "I couldn't find the member, jail role, or bot permissions.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (target.id === guild.ownerId) {
+    await interaction.reply({
+      content: "The server owner cannot be jailed.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (
+    target.roles.highest.position >= botMember.roles.highest.position ||
+    role.position >= botMember.roles.highest.position
+  ) {
+    await interaction.reply({
+      content: "My role must be higher than the member and the jail role.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (target.roles.cache.has(roleId)) {
+    await interaction.reply({
+      content: "That member is already in Nest Jail.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const jailedAt = new Date();
+  const releaseAt = new Date(jailedAt.getTime() + minutes * 60 * 1000);
+
+  await target.roles.add(role, `Nest Jail: ${reason}`);
+
+  db.prepare(`
+    INSERT INTO jail_sentences (
+      user_id,
+      guild_id,
+      moderator_id,
+      reason,
+      jailed_at,
+      release_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      guild_id = excluded.guild_id,
+      moderator_id = excluded.moderator_id,
+      reason = excluded.reason,
+      jailed_at = excluded.jailed_at,
+      release_at = excluded.release_at
+  `).run(
+    target.id,
+    guild.id,
+    interaction.user.id,
+    reason,
+    jailedAt.toISOString(),
+    releaseAt.toISOString()
+  );
+
+  await interaction.reply({
+    embeds: [
+      makeEmbed(
+        "🦇 WELCOME TO NEST JAIL",
+        `${target} has been sent to Nest Jail for **${minutes} minutes**.\n\n` +
+        `**Reason:** ${reason}\n` +
+        `**Release:** <t:${Math.floor(releaseAt.getTime() / 1000)}:R>`,
+        COLORS.crimson
+      )
+    ]
+  });
+}
+
+async function releaseJailedMember(guild, userId, announce = true) {
+  const sentence = db.prepare(`
+    SELECT *
+    FROM jail_sentences
+    WHERE user_id = ?
+      AND guild_id = ?
+  `).get(userId, guild.id);
+
+  if (!sentence) return false;
+
+  const roleId = jailRoleId();
+
+  if (!roleId) {
+    console.error("Cannot release jailed member: JAILBIRD_ROLE_ID is missing.");
+    return false;
+  }
+
+  const member = await guild.members.fetch(userId).catch(() => null);
+
+  if (!member) {
+    db.prepare(`
+      DELETE FROM jail_sentences
+      WHERE user_id = ?
+    `).run(userId);
+
+    return true;
+  }
+
+  if (member.roles.cache.has(roleId)) {
+    try {
+      await member.roles.remove(roleId, "Nest Jail sentence completed");
+    } catch (error) {
+      console.error(`Could not release ${userId} from jail:`, error);
+      return false;
+    }
+  }
+
+  db.prepare(`
+    DELETE FROM jail_sentences
+    WHERE user_id = ?
+  `).run(userId);
+
+  if (announce) {
+    const channel = guild.systemChannel;
+
+    if (channel) {
+      await channel.send({
+        embeds: [
+          makeEmbed(
+            "🔓 RELEASED FROM NEST JAIL",
+            `${member} has served their time and is free to return to The Nest!`,
+            COLORS.silver
+          )
+        ]
+      }).catch(() => {});
+    }
+  }
+
+  return true;
+}
+
+async function handleRelease(interaction) {
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageRoles)) {
+    await interaction.reply({
+      content: "You need Manage Roles permission to release someone.",
+      ephemeral: true
+    });
+    return;
+  }
+
+  const target = interaction.options.getUser("member", true);
+
+  const released = await releaseJailedMember(
+    interaction.guild,
+    target.id,
+    true
+  );
+
+  await interaction.reply({
+    content: released
+      ? `🔓 ${target} has been released from Nest Jail.`
+      : "That member does not have an active saved jail sentence, or I could not remove the jail role.",
+    ephemeral: true
+  });
+}
+
+async function checkJailSentences() {
+  const due = db.prepare(`
+    SELECT *
+    FROM jail_sentences
+    WHERE release_at <= ?
+  `).all(new Date().toISOString());
+
+  for (const sentence of due) {
+    const guild = await client.guilds.fetch(sentence.guild_id).catch(() => null);
+
+    if (!guild) continue;
+
+    await releaseJailedMember(guild, sentence.user_id, true);
+  }
+}
+
+// ==========================================
+// 🦉 INTERACTION HANDLER
 // ==========================================
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
-
-    // --------------------------------------
     // TIMEZONE AUTOCOMPLETE
-    // --------------------------------------
-
     if (interaction.isAutocomplete()) {
       if (
         interaction.commandName === "timezone" &&
@@ -777,23 +1477,71 @@ client.on(Events.InteractionCreate, async interaction => {
           TIMEZONES
             .filter(zone => zone.toLowerCase().includes(query))
             .slice(0, 25)
-            .map(zone => ({
-              name: zone,
-              value: zone
-            }))
+            .map(zone => ({ name: zone, value: zone }))
         );
       }
 
       return;
     }
 
-    // --------------------------------------
-    // DASHBOARD BUTTONS
-    // --------------------------------------
+    // MADLIBS MODAL SUBMISSION
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId === "hootie:madlibs") {
+        const values = {
+          noun: interaction.fields.getTextInputValue("noun"),
+          adjective: interaction.fields.getTextInputValue("adjective"),
+          verb: interaction.fields.getTextInputValue("verb"),
+          place: interaction.fields.getTextInputValue("place"),
+          exclamation: interaction.fields.getTextInputValue("exclamation")
+        };
 
+        const story = makeMadlib(values);
+
+        db.prepare(`
+          INSERT INTO arcade_madlibs (
+            guild_id,
+            channel_id,
+            user_id,
+            story_text
+          )
+          VALUES (?, ?, ?, ?)
+        `).run(
+          interaction.guildId,
+          interaction.channelId,
+          interaction.user.id,
+          story
+        );
+
+        recordArcadeGame(
+          interaction.user.id,
+          "madlibs",
+          5,
+          "Created a community Madlib"
+        );
+
+        await interaction.reply({
+          embeds: [
+            makeEmbed(
+              "📖 A TALE FROM THE HOLLOW",
+              `${story}\n\n+5 Arcade Points`,
+              COLORS.charcoal
+            )
+          ]
+        });
+      }
+
+      return;
+    }
+
+    // DASHBOARD BUTTONS
     if (interaction.isButton()) {
       if (interaction.customId.startsWith("hootie:")) {
         const tab = interaction.customId.split(":")[1];
+
+        if (!["overview", "activities", "badges", "challenges"].includes(tab)) {
+          return;
+        }
+
         const stats = getStats(interaction.user.id);
 
         await interaction.update(
@@ -810,14 +1558,14 @@ client.on(Events.InteractionCreate, async interaction => {
 
     ensureUser(userId);
 
-    // --------------------------------------
-    // NEST WELCOME
-    // --------------------------------------
+    // ======================================
+    // 🖤 THE NEST
+    // ======================================
 
     if (interaction.commandName === "nest") {
       await interaction.reply({
         embeds: [
-          embed(
+          makeEmbed(
             "🖤 Welcome to The Nest",
             "A cozy corner of the Hollow for wellness, growth, games, and a little midnight mischief.\n\n" +
             "Use `/wellness` to open your Nest Archives and `/arcade` to visit the Midnight Arcade.",
@@ -825,18 +1573,13 @@ client.on(Events.InteractionCreate, async interaction => {
           )
         ]
       });
-
       return;
     }
-
-    // --------------------------------------
-    // PING
-    // --------------------------------------
 
     if (interaction.commandName === "ping") {
       await interaction.reply({
         embeds: [
-          embed(
+          makeEmbed(
             "🦉 Hootie is awake!",
             `Pong! ${client.ws.ping}ms`,
             COLORS.crimson
@@ -844,13 +1587,12 @@ client.on(Events.InteractionCreate, async interaction => {
         ],
         ephemeral: true
       });
-
       return;
     }
 
-    // --------------------------------------
-    // DAILY WELLNESS CHECK-IN
-    // --------------------------------------
+    // ======================================
+    // 🪺 DAILY WELLNESS CHECK-IN
+    // ======================================
 
     if (interaction.commandName === "checkin") {
       const response = interaction.options.getString("response", true);
@@ -895,13 +1637,7 @@ client.on(Events.InteractionCreate, async interaction => {
             reward_earned
           )
           VALUES (?, ?, ?, ?, ?, 1)
-        `).run(
-          userId,
-          response,
-          visibility,
-          today,
-          timezone
-        );
+        `).run(userId, response, visibility, today, timezone);
 
         db.prepare(`
           INSERT INTO wellness_streaks (
@@ -937,13 +1673,7 @@ client.on(Events.InteractionCreate, async interaction => {
             reward_earned
           )
           VALUES (?, ?, ?, ?, ?, 0)
-        `).run(
-          userId,
-          response,
-          visibility,
-          today,
-          timezone
-        );
+        `).run(userId, response, visibility, today, timezone);
       }
 
       const badges = awardBadges(userId);
@@ -953,12 +1683,11 @@ client.on(Events.InteractionCreate, async interaction => {
         ? "Your check-in has been added. Today's daily reward was already collected."
         : "Your check-in has been recorded.";
 
-      const e = embed(
+      const e = makeEmbed(
         "🪺 NEST CHECK-IN",
         `${message}\n\n` +
-        `**Your reflection:** ${response}\n\n` +
-        `${prior ? "" : "+10 Wellness Points"} · 🔥 ${streak} day streak\n` +
-        `Visibility: **${visibility}**`,
+        `**Reflection:** ${response}\n\n` +
+        `${prior ? "" : "+10 Wellness Points"} · 🔥 ${streak} day streak`,
         COLORS.burgundy
       );
 
@@ -982,15 +1711,15 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // --------------------------------------
-    // WELLNESS ACTIVITY COMMANDS
-    // --------------------------------------
+    // ======================================
+    // 💧 WELLNESS ACTIVITIES
+    // ======================================
 
     const activityCommands = {
       water: {
         type: "water",
-        option: "amount",
-        label: "ml of water"
+        option: "cups",
+        label: "cups of water"
       },
       steps: {
         type: "steps",
@@ -1050,41 +1779,55 @@ client.on(Events.InteractionCreate, async interaction => {
       const badges = awardBadges(userId);
       const challenges = evaluateChallenges(userId);
 
-      const shown =
-        typeof activityValue === "string"
-          ? activityValue
-          : `${activityValue} ${config.label}`;
+      let shown;
+
+      if (config.type === "water") {
+        shown = `${Number(activityValue)} ${Number(activityValue) === 1 ? "cup" : "cups"} of water`;
+      } else if (config.type === "steps") {
+        shown = `${Number(activityValue).toLocaleString()} steps`;
+      } else if (config.type === "sleep") {
+        shown = `${activityValue} hours of sleep`;
+      } else {
+        shown = activityValue;
+      }
+
+      const minutes = config.type === "workout"
+        ? interaction.options.getInteger("minutes")
+        : null;
 
       let message =
-        `Logged **${shown}**.\n` +
-        `You earned **${pointsAwarded} Wellness Points**.`;
+        `🦉 <@${userId}> logged **${shown}**!\n` +
+        `+${pointsAwarded} Wellness Points`;
+
+      if (minutes) {
+        message += `\n⏱️ Movement duration: **${minutes} minutes**`;
+      }
 
       if (badges.length) {
-        message +=
-          `\n🏅 New badge: ${badges.map(badge => badge.name).join(", ")}`;
+        message += `\n🏅 New badge: ${badges.map(b => b.name).join(", ")}`;
       }
 
       if (challenges.length) {
-        message +=
-          `\n🏆 Challenge completed: ${challenges.join(", ")}`;
+        message += `\n🏆 Challenge completed: ${challenges.join(", ")}`;
       }
 
+      // Public activity announcement.
       await interaction.reply({
         embeds: [
-          embed(
+          makeEmbed(
             "🌙 WELLNESS LOG UPDATED",
-            message
+            message,
+            COLORS.burgundy
           )
-        ],
-        ephemeral: true
+        ]
       });
 
       return;
     }
 
-    // --------------------------------------
-    // PERSONAL WELLNESS DASHBOARD
-    // --------------------------------------
+    // ======================================
+    // 📖 PERSONAL WELLNESS DASHBOARD
+    // ======================================
 
     if (interaction.commandName === "wellness") {
       const member =
@@ -1092,50 +1835,36 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const stats = getStats(member.id);
 
-      const latest = db.prepare(`
-        SELECT visibility
-        FROM wellness_checkins
-        WHERE user_id = ?
-        ORDER BY created_at DESC, id DESC
-        LIMIT 1
-      `).get(member.id);
-
-      if (
-        member.id !== userId &&
-        (!latest || latest.visibility !== "public")
-      ) {
+      if (member.id === userId) {
         await interaction.reply({
-          content: "That member's Nest Archives are private.",
+          ...dashboardPayload(member, stats),
           ephemeral: true
         });
-
         return;
       }
 
       await interaction.reply({
-        ...dashboardPayload(member, stats),
+        embeds: [publicWellnessEmbed(member, stats)],
         ephemeral: true
       });
 
       return;
     }
 
-    // --------------------------------------
-    // WELLNESS LEADERBOARD
-    // --------------------------------------
+    // ======================================
+    // 🏆 WELLNESS LEADERBOARD
+    // ======================================
 
     if (interaction.commandName === "leaderboard") {
       const ranking = interaction.options.getString("ranking", true);
 
-      const period =
-        ranking === "weekly"
-          ? "weekly_points"
-          : "lifetime_points";
+      const period = ranking === "weekly"
+        ? "weekly_points"
+        : "lifetime_points";
 
-      const title =
-        ranking === "weekly"
-          ? "Weekly Wellness Points"
-          : "Lifetime Owl XP";
+      const title = ranking === "weekly"
+        ? "Weekly Wellness Points"
+        : "Lifetime Owl XP";
 
       const rows = db.prepare(`
         SELECT user_id, ${period} AS score
@@ -1152,19 +1881,16 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await interaction.reply({
         embeds: [
-          embed(
-            `🏆 ${title}`,
-            lines
-          )
+          makeEmbed(`🏆 ${title}`, lines)
         ]
       });
 
       return;
     }
 
-    // --------------------------------------
-    // WEEKLY CHALLENGES
-    // --------------------------------------
+    // ======================================
+    // 🏅 WEEKLY CHALLENGES
+    // ======================================
 
     if (interaction.commandName === "challenges") {
       const start = weekStart(localDate(getTimezone(userId)));
@@ -1178,11 +1904,7 @@ client.on(Events.InteractionCreate, async interaction => {
       `).all(start);
 
       const lines = rows.map(challenge => {
-        const progress = challengeProgress(
-          userId,
-          challenge,
-          start
-        );
+        const progress = challengeProgress(userId, challenge, start);
 
         return (
           `${progress >= challenge.target ? "✅" : "🌙"} **${challenge.title}**\n` +
@@ -1195,10 +1917,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await interaction.reply({
         embeds: [
-          embed(
-            "🏆 THIS WEEK IN THE NEST",
-            lines
-          )
+          makeEmbed("🏆 THIS WEEK IN THE NEST", lines)
         ],
         ephemeral: true
       });
@@ -1206,9 +1925,9 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // --------------------------------------
-    // PERSONAL TIME ZONE
-    // --------------------------------------
+    // ======================================
+    // 🕒 TIME ZONE
+    // ======================================
 
     if (interaction.commandName === "timezone") {
       const subcommand = interaction.options.getSubcommand();
@@ -1217,15 +1936,12 @@ client.on(Events.InteractionCreate, async interaction => {
         const zone = interaction.options.getString("zone", true);
 
         try {
-          new Intl.DateTimeFormat("en-US", {
-            timeZone: zone
-          });
+          new Intl.DateTimeFormat("en-US", { timeZone: zone });
         } catch {
           await interaction.reply({
             content: "That time zone isn't valid. Please choose one from the suggestions.",
             ephemeral: true
           });
-
           return;
         }
 
@@ -1259,22 +1975,13 @@ client.on(Events.InteractionCreate, async interaction => {
     // 🦇 MIDNIGHT ARCADE
     // ======================================
 
-    // --------------------------------------
-    // ARCADE MENU
-    // --------------------------------------
-
     if (interaction.commandName === "arcade") {
       await showArcade(interaction);
       return;
     }
 
-    // --------------------------------------
-    // LAST LETTER
-    // --------------------------------------
-
     if (interaction.commandName === "lastletter") {
-      const raw = interaction.options
-        .getString("word", true)
+      const raw = interaction.options.getString("word", true)
         .trim()
         .toLowerCase();
 
@@ -1285,7 +1992,6 @@ client.on(Events.InteractionCreate, async interaction => {
           content: "Use one word containing only English letters (at least two).",
           ephemeral: true
         });
-
         return;
       }
 
@@ -1299,28 +2005,27 @@ client.on(Events.InteractionCreate, async interaction => {
           AND channel_id = ?
       `).get(guildId, channelId);
 
-      const used = state
-        ? JSON.parse(state.used_words || "[]")
-        : [];
+      let used;
+
+      try {
+        used = state ? JSON.parse(state.used_words || "[]") : [];
+      } catch {
+        used = [];
+      }
 
       if (used.includes(word)) {
         await interaction.reply({
           content: `**${word}** has already been used in this round.`,
           ephemeral: true
         });
-
         return;
       }
 
-      if (
-        state?.current_letter &&
-        word[0] !== state.current_letter
-      ) {
+      if (state?.current_letter && word[0] !== state.current_letter) {
         await interaction.reply({
           content: `The next word must begin with **${state.current_letter.toUpperCase()}**.`,
           ephemeral: true
         });
-
         return;
       }
 
@@ -1329,7 +2034,6 @@ client.on(Events.InteractionCreate, async interaction => {
           content: "Give another night owl a turn before playing again!",
           ephemeral: true
         });
-
         return;
       }
 
@@ -1362,16 +2066,11 @@ client.on(Events.InteractionCreate, async interaction => {
         JSON.stringify(used)
       );
 
-      recordArcadeGame(
-        userId,
-        "lastletter",
-        5,
-        `Last Letter: ${word}`
-      );
+      recordArcadeGame(userId, "lastletter", 5, `Last Letter: ${word}`);
 
       await interaction.reply({
         embeds: [
-          embed(
+          makeEmbed(
             "🔤 THE LAST LETTER",
             `**${interaction.user.username}** played **${word}**!\n\n` +
             `Next word starts with **${nextLetter.toUpperCase()}**.\n` +
@@ -1384,81 +2083,25 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // --------------------------------------
-    // MADLIBS
-    // --------------------------------------
-
     if (interaction.commandName === "madlibs") {
-      const pick = list => randomItem(list);
-
-      const story =
-        `At the edge of the Hollow, a ` +
-        `${pick(["sparkly", "suspicious", "dramatic", "soggy", "haunted"])} ` +
-        `${pick(["owl", "turnip", "ghost", "teapot", "skeleton"])} ` +
-        `decided to ${pick(["dance", "scream", "moonwalk", "juggle", "hibernate"])} ` +
-        `inside the ${pick(["library", "pumpkin patch", "castle", "laundromat", "moon"])}.\n\n` +
-
-        `Suddenly, a ${pick(["tiny", "ancient", "cranky", "glittery", "invisible"])} ` +
-        `${pick(["wizard", "raccoon", "vampire", "mushroom", "hamster"])} appeared, ` +
-        `shouting, “${pick(["The snacks are cursed!", "Who stole my cape?", "Long live the moon!", "I regret everything!", "Bring me soup!"])}”\n\n` +
-
-        `And that is how the legend of the ` +
-        `${pick(["Midnight", "Crimson", "Unreasonably Moist", "Forgotten", "Very Confused"])} ` +
-        `${pick(["Pancake", "Owl", "Sock", "Goblin", "Meatball"])} began.`;
-
-      db.prepare(`
-        INSERT INTO arcade_madlibs (
-          guild_id,
-          channel_id,
-          user_id,
-          story_text
-        )
-        VALUES (?, ?, ?, ?)
-      `).run(
-        interaction.guildId,
-        interaction.channelId,
-        userId,
-        story
-      );
-
-      recordArcadeGame(
-        userId,
-        "madlibs",
-        5,
-        "Generated a Madlib"
-      );
-
-      await interaction.reply({
-        embeds: [
-          embed(
-            "📖 A TALE FROM THE HOLLOW",
-            `${story}\n\n+5 Arcade Points`,
-            COLORS.charcoal
-          )
-        ]
-      });
-
+      await interaction.showModal(madlibsModal());
       return;
     }
 
-    // --------------------------------------
-    // COMMUNITY STORY
-    // --------------------------------------
-
     if (interaction.commandName === "story") {
-      const contribution =
-        interaction.options.getSubcommand() === "contribution"
-          ? interaction.options.getString("text", true).trim()
-          : "";
+      const contribution = interaction.options
+        .getString("contribution", true)
+        .trim();
 
-      if (!contribution || contribution.length > 350) {
+      if (!contribution || contribution.length > 500) {
         await interaction.reply({
-          content: "Your story contribution must be between 1 and 350 characters.",
+          content: "Your story contribution must be between 1 and 500 characters.",
           ephemeral: true
         });
-
         return;
       }
+
+      const guildId = interaction.guildId || "dm";
 
       db.prepare(`
         INSERT INTO arcade_story_contributions (
@@ -1468,19 +2111,9 @@ client.on(Events.InteractionCreate, async interaction => {
           contribution
         )
         VALUES (?, ?, ?, ?)
-      `).run(
-        interaction.guildId || "dm",
-        interaction.channelId,
-        userId,
-        contribution
-      );
+      `).run(guildId, interaction.channelId, userId, contribution);
 
-      recordArcadeGame(
-        userId,
-        "story",
-        3,
-        "Added to the community story"
-      );
+      recordArcadeGame(userId, "story", 3, "Added to the community story");
 
       const recent = db.prepare(`
         SELECT user_id, contribution
@@ -1489,20 +2122,17 @@ client.on(Events.InteractionCreate, async interaction => {
           AND channel_id = ?
         ORDER BY id DESC
         LIMIT 5
-      `).all(
-        interaction.guildId || "dm",
-        interaction.channelId
-      ).reverse();
+      `).all(guildId, interaction.channelId).reverse();
 
-      const text = recent.map(row =>
+      const storyText = recent.map(row =>
         `**<@${row.user_id}>:** ${row.contribution}`
       ).join("\n\n");
 
       await interaction.reply({
         embeds: [
-          embed(
+          makeEmbed(
             "📜 THE NEST'S NEVERENDING STORY",
-            `${text}\n\n+3 Arcade Points for adding to the tale.`,
+            `${storyText}\n\n+3 Arcade Points for adding to the tale.`,
             COLORS.charcoal
           )
         ]
@@ -1511,195 +2141,109 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // --------------------------------------
-    // CREATURE COLLECTION
-    // --------------------------------------
+    // ======================================
+    // 🐉 CREATURES
+    // ======================================
 
     if (interaction.commandName === "creatures") {
-      const subcommand = interaction.options.getSubcommand();
+      await handleCreatureCommand(interaction);
+      return;
+    }
 
-      // VIEW COLLECTION
-      if (subcommand === "collection") {
-        const rows = db.prepare(`
-          SELECT c.*, uc.discovered_at
-          FROM user_creatures uc
-          JOIN creature_catalog c
-            ON c.creature_id = uc.creature_id
-          WHERE uc.user_id = ?
-          ORDER BY
-            CASE c.rarity
-              WHEN 'Legendary' THEN 1
-              WHEN 'Rare' THEN 2
-              WHEN 'Uncommon' THEN 3
-              ELSE 4
-            END,
-            c.creature_name
-        `).all(userId);
+    if (interaction.commandName === "catch") {
+      if (!interaction.guildId) {
+        await interaction.reply({
+          content: "Creature catching is only available inside The Nest.",
+          ephemeral: true
+        });
+        return;
+      }
 
-        const all = db.prepare(`
-          SELECT COUNT(*) AS n
-          FROM creature_catalog
-        `).get().n;
+      const result = attemptCatch(
+        userId,
+        interaction.guildId,
+        interaction.channelId
+      );
 
-        const description = rows.length
-          ? rows.map(creature =>
-              `**${creature.creature_name}** · ${creature.rarity} ${creature.creature_type}`
-            ).join("\n")
-          : "Your collection is waiting for its first little visitor. Try `/creatures discover`.";
+      if (result.result === "none") {
+        await interaction.reply({
+          content: "🌙 There are no wild creatures here right now. Keep watch for the next spawn!",
+          ephemeral: true
+        });
+        return;
+      }
 
+      if (result.result === "tried") {
+        await interaction.reply({
+          content: "You've already tried to catch this creature. Give another night owl a chance!",
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (result.result === "gone") {
+        await interaction.reply({
+          content: "That creature has already disappeared into the Hollow.",
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (result.result === "lost") {
+        await interaction.reply({
+          content: "Another night owl caught it first!",
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (result.result === "failed") {
         await interaction.reply({
           embeds: [
-            embed(
-              `🐉 ${interaction.user.username}'s Hollow Companions`,
-              `${description}\n\n**Collection:** ${rows.length}/${all}`,
+            makeEmbed(
+              "🍃 THE CREATURE ESCAPED!",
+              `**${result.spawn.creature_name}** slipped away!\n\n` +
+              `Your catch chance was ${result.chance}%.\n` +
+              `You cannot retry this particular spawn, but another creature may appear soon.`,
               COLORS.charcoal
             )
           ],
           ephemeral: true
         });
-
         return;
       }
 
-      // DISCOVER CREATURE
-      if (subcommand === "discover") {
-        const owned = new Set(
-          db.prepare(`
-            SELECT creature_id
-            FROM user_creatures
-            WHERE user_id = ?
-          `).all(userId).map(row => row.creature_id)
-        );
-
-        const chances = [
-          { rarity: "Common", weight: 60 },
-          { rarity: "Uncommon", weight: 25 },
-          { rarity: "Rare", weight: 12 },
-          { rarity: "Legendary", weight: 3 }
-        ];
-
-        let roll = Math.random() * 100;
-        let rarity = "Common";
-
-        for (const entry of chances) {
-          roll -= entry.weight;
-
-          if (roll < 0) {
-            rarity = entry.rarity;
-            break;
-          }
-        }
-
-        let pool = db.prepare(`
-          SELECT *
-          FROM creature_catalog
-          WHERE rarity = ?
-        `).all(rarity).filter(creature =>
-          !owned.has(creature.creature_id)
-        );
-
-        if (!pool.length) {
-          pool = db.prepare(`
-            SELECT *
-            FROM creature_catalog
-          `).all().filter(creature =>
-            !owned.has(creature.creature_id)
+      if (result.result === "caught") {
+        if (result.added) {
+          recordArcadeGame(
+            userId,
+            "creature_catch",
+            10,
+            `Caught ${result.spawn.creature_name}`
           );
         }
 
-        if (!pool.length) {
-          await interaction.reply({
-            content: "✨ You've discovered every creature in the current Hollow collection!",
-            ephemeral: true
-          });
-
-          return;
-        }
-
-        const creature = randomItem(pool);
-
-        db.prepare(`
-          INSERT OR IGNORE INTO user_creatures (
-            user_id,
-            creature_id
-          )
-          VALUES (?, ?)
-        `).run(userId, creature.creature_id);
-
-        recordArcadeGame(
-          userId,
-          "creature_discovery",
-          10,
-          `Discovered ${creature.creature_name}`
-        );
-
         await interaction.reply({
           embeds: [
-            embed(
-              "✨ A CREATURE HAS FOUND YOU",
-              `**${creature.creature_name}**\n` +
-              `*${creature.rarity} ${creature.creature_type}*\n\n` +
-              `${creature.description}\n\n` +
-              `+10 Arcade Points\n` +
-              `Added to your collection!`,
+            makeEmbed(
+              "✨ CREATURE CAUGHT!",
+              `🎉 <@${userId}> caught **${result.spawn.creature_name}**!\n\n` +
+              `*${result.spawn.rarity} ${result.spawn.creature_type}*\n` +
+              `${result.spawn.description}\n\n` +
+              (result.added
+                ? "Added to your collection! +10 Arcade Points."
+                : "You already owned this creature, but you won the catch!"),
               COLORS.crimson
             )
           ]
         });
-
-        return;
-      }
-
-      // CREATURE PROFILE
-      if (subcommand === "profile") {
-        const name = interaction.options
-          .getString("creature", true)
-          .trim();
-
-        const creature = db.prepare(`
-          SELECT *
-          FROM creature_catalog
-          WHERE lower(creature_name) = lower(?)
-             OR lower(creature_id) = lower(?)
-        `).get(name, name);
-
-        if (!creature) {
-          await interaction.reply({
-            content: "I couldn't find that creature in the Hollow catalog.",
-            ephemeral: true
-          });
-
-          return;
-        }
-
-        const owned = db.prepare(`
-          SELECT 1
-          FROM user_creatures
-          WHERE user_id = ?
-            AND creature_id = ?
-        `).get(userId, creature.creature_id);
-
-        await interaction.reply({
-          embeds: [
-            embed(
-              `🐉 ${creature.creature_name}`,
-              `**Type:** ${creature.creature_type}\n` +
-              `**Rarity:** ${creature.rarity}\n` +
-              `**Discovered:** ${owned ? "Yes — in your collection" : "Not yet"}\n\n` +
-              `${creature.description}`,
-              COLORS.charcoal
-            )
-          ],
-          ephemeral: true
-        });
-
         return;
       }
     }
 
-    // --------------------------------------
-    // ARCADE LEADERBOARD
-    // --------------------------------------
+    // ======================================
+    // 🏆 ARCADE LEADERBOARD
+    // ======================================
 
     if (interaction.commandName === "arcadeleaderboard") {
       const rows = db.prepare(`
@@ -1717,7 +2261,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await interaction.reply({
         embeds: [
-          embed(
+          makeEmbed(
             "🦇 MIDNIGHT ARCADE LEADERBOARD",
             lines,
             COLORS.charcoal
@@ -1725,6 +2269,20 @@ client.on(Events.InteractionCreate, async interaction => {
         ]
       });
 
+      return;
+    }
+
+    // ======================================
+    // 🔒 JAIL
+    // ======================================
+
+    if (interaction.commandName === "jail") {
+      await handleJail(interaction);
+      return;
+    }
+
+    if (interaction.commandName === "release") {
+      await handleRelease(interaction);
       return;
     }
 
@@ -1749,27 +2307,20 @@ client.on(Events.InteractionCreate, async interaction => {
 // ==========================================
 
 async function registerCommands() {
-  try {
-    await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: commands }
-    );
+  await rest.put(
+    Routes.applicationCommands(process.env.CLIENT_ID),
+    { body: commands }
+  );
 
-    console.log("🦉 Slash commands registered!");
-  } catch (error) {
-    console.error("Command registration failed:", error);
-    throw error;
-  }
+  console.log("🦉 Slash commands registered!");
 }
 
 // ==========================================
-// 🖤 HOOTIE STARTUP
+// 🖤 STARTUP
 // ==========================================
 
 client.once(Events.ClientReady, async readyClient => {
-  console.log(
-    `🖤 HOOTIE 2.0 IS ONLINE — ${readyClient.user.tag}`
-  );
+  console.log(`🖤 HOOTIE 2.0 IS ONLINE — ${readyClient.user.tag}`);
 
   try {
     for (const user of db.prepare(`
@@ -1782,7 +2333,28 @@ client.once(Events.ClientReady, async readyClient => {
       );
     }
 
+    // Prepare this week's challenges.
+    const today = localDate("America/Los_Angeles");
+    ensureWeeklyChallenges(weekStart(today));
+
+    // Expire old spawns and restart the automatic spawn scheduler.
+    restoreCreatureSpawns();
+
+    // Resume jail sentence checks after a Railway restart.
+    await checkJailSentences();
+
+    setInterval(() => {
+      checkJailSentences().catch(error =>
+        console.error("Jail release checker error:", error)
+      );
+    }, 30 * 1000);
+
     await registerCommands();
+
+    console.log("🪺 Wellness system ready");
+    console.log("🦇 Midnight Arcade ready");
+    console.log("🐉 Creature spawning system ready");
+    console.log("🔒 Jail sentence checker ready");
 
   } catch (error) {
     console.error("Startup task failed:", error);
