@@ -68,7 +68,8 @@ async function registerCommands() {
   try {
     if (guildId) {
       await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
-      console.log(`✅ Registered ${commands.length} guild slash commands for ${guildId}`);
+      await rest.put(Routes.applicationCommands(clientId), { body: [] });
+      console.log(`✅ Registered ${commands.length} guild slash commands for ${guildId} (cleared legacy global commands)`);
     } else {
       await rest.put(Routes.applicationCommands(clientId), { body: commands });
       console.log(`✅ Registered ${commands.length} global slash commands`);
