@@ -347,6 +347,34 @@ const creatures = [
     type: "Moon",
     rarity: "Mythic",
     description: "A beloved black-and-white havanese with a moonlit aura and a heart of pure mischief."
+  },
+  {
+    id: "codee",
+    name: "Codee",
+    type: "Guardian",
+    rarity: "Mythic",
+    description: "A stout, heart-heavy Staffy guardian from the stony Midlands. Bold, fearless, and notoriously stubborn, he watches over the ancient Hollow libraries."
+  },
+  {
+    id: "kiara",
+    name: "Kiara",
+    type: "Shadow",
+    rarity: "Mythic",
+    description: "Cloaked in brindle shadows, Kiara prowls the candlelit amethyst vaults beneath the Hollow, sniffing out ancient runes and hidden relics."
+  },
+  {
+    id: "kion",
+    name: "Kion",
+    type: "Fire",
+    rarity: "Mythic",
+    description: "A golden-coated beacon in the Hollow's darkest marshes, Kion guides lost night owls along misty lakeside piers with warm lantern light."
+  },
+  {
+    id: "pepper",
+    name: "Pepper",
+    type: "Moon",
+    rarity: "Mythic",
+    description: "Perched high atop the cathedral clocktower, silver-whiskered Pepper watches the stars turn—no nocturnal secret escapes her gaze."
   }
 ];
 
@@ -357,12 +385,29 @@ const upsertCreature = db.prepare(`
     creature_name = excluded.creature_name,
     creature_type = excluded.creature_type,
     rarity = excluded.rarity,
-    description = excluded.description
+    description = excluded.description,
+    catch_chance = excluded.catch_chance
 `);
+
+const grantStarterDog = db.prepare(`
+  INSERT OR IGNORE INTO user_creatures (user_id, creature_id, count, fastest_catch_ms)
+  VALUES (?, ?, 1, 1250)
+`);
+
+// Add your Discord User ID(s) here to automatically place Codee, Kiara, Kion, and Pepper into your inventory on startup:
+const DOG_RECIPIENT_USER_IDS = [
+  // "123456789012345678"
+];
 
 db.transaction(() => {
   for (const creature of creatures) {
     upsertCreature.run(creature);
+  }
+
+  for (const userId of DOG_RECIPIENT_USER_IDS) {
+    for (const dogId of ["codee", "kiara", "kion", "pepper"]) {
+      grantStarterDog.run(userId, dogId);
+    }
   }
 })();
 
