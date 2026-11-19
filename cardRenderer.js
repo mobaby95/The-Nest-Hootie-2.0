@@ -319,4 +319,12 @@ async function renderCreatureCard(creature, options = {}) {
 
   const fileName = `${creature.creature_id}-card.png`;
   return {
-    attachment: new AttachmentBuilder(canvas.toBuffer("image/png"), { name
+    attachment: new AttachmentBuilder(canvas.toBuffer("image/png"), { name: fileName }),
+    fileName
+  };
+}
+
+module.exports = {
+  renderCreatureCard,
+  findCreatureAsset
+};
