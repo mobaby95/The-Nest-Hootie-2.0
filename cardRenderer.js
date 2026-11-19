@@ -296,13 +296,15 @@ async function renderCreatureCard(creature, options = {}) {
     ctx.fillText("FIRST TO TYPE  catch  IN CHAT CLAIMS IT!", width / 2, 772);
   } else if (mode === "caught") {
     const sec = catchTimeMs != null ? `${(catchTimeMs / 1000).toFixed(2)}s` : "";
+    const stampText = `CAUGHT BY ${(catcherName || "OWL").toUpperCase()}  •  ${sec}  •  OWNED: x${ownedCount}`;
+    let fontSize = 20;
+    ctx.font = `bold ${fontSize}px ${CARD_FONT}`;
+    while (ctx.measureText(stampText).width > width - 96 && fontSize > 13) {
+      fontSize -= 1;
+      ctx.font = `bold ${fontSize}px ${CARD_FONT}`;
+    }
     ctx.fillStyle = "#FFFFFF";
-    ctx.font = `bold 20px ${CARD_FONT}`;
-    ctx.fillText(
-      `CAUGHT BY ${(catcherName || "OWL").toUpperCase()}  •  ${sec}  •  OWNED: x${ownedCount}`,
-      width / 2,
-      772
-    );
+    ctx.fillText(stampText, width / 2, 772);
   } else {
     const best = fastestMs != null ? `BEST: ${(fastestMs / 1000).toFixed(2)}s` : "UNCAUGHT";
     ctx.fillStyle = theme.accent;
@@ -317,12 +319,4 @@ async function renderCreatureCard(creature, options = {}) {
 
   const fileName = `${creature.creature_id}-card.png`;
   return {
-    attachment: new AttachmentBuilder(canvas.toBuffer("image/png"), { name: fileName }),
-    fileName
-  };
-}
-
-module.exports = {
-  renderCreatureCard,
-  findCreatureAsset
-};
+    attachment: new AttachmentBuilder(canvas.toBuffer("image/png"), { name
