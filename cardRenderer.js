@@ -3,7 +3,6 @@ const { AttachmentBuilder } = require("discord.js");
 const fs = require("fs");
 const path = require("path");
 
-// Register valid font from @fontsource/roboto for Linux/Railway
 const ROBOTO_REGULAR = path.join(
   __dirname,
   "node_modules",
@@ -28,9 +27,6 @@ if (fs.existsSync(ROBOTO_REGULAR)) {
     GlobalFonts.registerFromPath(ROBOTO_BOLD, "Roboto");
   }
   CARD_FONT = "Roboto";
-  console.log("✅ Registered Roboto | Available families:", GlobalFonts.families.map(f => f.family));
-} else {
-  console.warn("⚠️ Roboto font file not found.");
 }
 
 const RARITY_THEMES = {
@@ -147,7 +143,9 @@ async function renderCreatureCard(creature, options = {}) {
     catcherName = null,
     catchTimeMs = null,
     ownedCount = 0,
-    fastestMs = null
+    shinyCount = 0,
+    fastestMs = null,
+    isShiny = false
   } = options;
 
   const width = 600;
@@ -155,13 +153,32 @@ async function renderCreatureCard(creature, options = {}) {
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext("2d");
 
-  const theme = RARITY_THEMES[creature.rarity] || RARITY_THEMES.Common;
+  const baseTheme = RARITY_THEMES[creature.rarity] || RARITY_THEMES.Common;
+  const theme = isShiny
+    ? {
+        borderPrimary: "#F6E05E",
+        borderSecondary: "#D69E2E",
+        headerBg: "#2D2412",
+        badgeBg: "#B7791F",
+        accent: "#FEFCBF",
+        stars: `✦ SHINY ${baseTheme.stars} ✦`,
+        holo: true
+      }
+    : baseTheme;
 
-  // Outer card frame gradient
+  // Outer card frame gradient (Prismatic Gold for Shiny)
   const outerGrad = ctx.createLinearGradient(0, 0, width, height);
-  outerGrad.addColorStop(0, theme.borderPrimary);
-  outerGrad.addColorStop(0.5, theme.borderSecondary);
-  outerGrad.addColorStop(1, theme.borderPrimary);
+  if (isShiny) {
+    outerGrad.addColorStop(0, "#F6E05E");
+    outerGrad.addColorStop(0.25, "#F687B3");
+    outerGrad.addColorStop(0.5, "#81E6D9");
+    outerGrad.addColorStop(0.75, "#B794F4");
+    outerGrad.addColorStop(1, "#F6E05E");
+  } else {
+    outerGrad.addColorStop(0, theme.borderPrimary);
+    outerGrad.addColorStop(0.5, theme.borderSecondary);
+    outerGrad.addColorStop(1, theme.borderPrimary);
+  }
 
   roundRect(ctx, 0, 0, width, height, 32);
   ctx.fillStyle = outerGrad;
@@ -169,19 +186,26 @@ async function renderCreatureCard(creature, options = {}) {
 
   // Inner dark card body
   roundRect(ctx, 18, 18, width - 36, height - 36, 22);
-  ctx.fillStyle = "#16141C";
+  ctx.fillStyle = isShiny ? "#1A1722" : "#16141C";
   ctx.fill();
 
-  // Subtle holographic diagonal shimmer
+  // Holographic / Prismatic Shimmer
   if (theme.holo) {
     ctx.save();
     roundRect(ctx, 18, 18, width - 36, height - 36, 22);
     ctx.clip();
     const holoGrad = ctx.createLinearGradient(0, 0, width, height);
-    holoGrad.addColorStop(0, "rgba(255, 255, 255, 0.02)");
-    holoGrad.addColorStop(0.35, "rgba(246, 135, 179, 0.12)");
-    holoGrad.addColorStop(0.65, "rgba(129, 230, 217, 0.12)");
-    holoGrad.addColorStop(1, "rgba(236, 201, 75, 0.06)");
+    if (isShiny) {
+      holoGrad.addColorStop(0, "rgba(246, 224, 94, 0.16)");
+      holoGrad.addColorStop(0.35, "rgba(246, 135, 179, 0.18)");
+      holoGrad.addColorStop(0.65, "rgba(129, 230, 217, 0.18)");
+      holoGrad.addColorStop(1, "rgba(246, 224, 94, 0.16)");
+    } else {
+      holoGrad.addColorStop(0, "rgba(255, 255, 255, 0.02)");
+      holoGrad.addColorStop(0.35, "rgba(246, 135, 179, 0.12)");
+      holoGrad.addColorStop(0.65, "rgba(129, 230, 217, 0.12)");
+      holoGrad.addColorStop(1, "rgba(236, 201, 75, 0.06)");
+    }
     ctx.fillStyle = holoGrad;
     ctx.fillRect(18, 18, width - 36, height - 36);
     ctx.restore();
@@ -196,10 +220,11 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.stroke();
 
   // Creature Name
-  ctx.fillStyle = "#FFFFFF";
-  ctx.font = `bold 30px ${CARD_FONT}`;
+  ctx.fillStyle = isShiny ? "#FEFCBF" : "#FFFFFF";
+  ctx.font = `bold 28px ${CARD_FONT}`;
   ctx.textBaseline = "middle";
-  ctx.fillText(creature.creature_name, 52, 68);
+  const displayName = isShiny ? `✨ ${creature.creature_name}` : creature.creature_name;
+  ctx.fillText(displayName, 52, 68);
 
   // Type Pill on Right of Header
   const typeLabel = `${creature.creature_type.toUpperCase()}`;
@@ -234,6 +259,21 @@ async function renderCreatureCard(creature, options = {}) {
     const offsetX = artX + (artW - drawW) / 2;
     const offsetY = artY + (artH - drawH) / 2;
     ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+
+    // Golden sparkle wash over Shiny portrait
+    if (isShiny) {
+      const shineGrad = ctx.createLinearGradient(artX, artY, artX + artW, artY + artH);
+      shineGrad.addColorStop(0, "rgba(255, 248, 180, 0.14)");
+      shineGrad.addColorStop(0.5, "rgba(255, 255, 255, 0.0)");
+      shineGrad.addColorStop(1, "rgba(246, 224, 94, 0.22)");
+      ctx.fillStyle = shineGrad;
+      ctx.fillRect(artX, artY, artW, artH);
+
+      ctx.fillStyle = "rgba(254, 252, 191, 0.9)";
+      ctx.font = `bold 28px ${CARD_FONT}`;
+      ctx.fillText("✦", artX + 20, artY + 34);
+      ctx.fillText("✦", artX + artW - 44, artY + artH - 24);
+    }
   } else {
     ctx.fillStyle = "#24202E";
     ctx.fillRect(artX, artY, artW, artH);
@@ -247,7 +287,7 @@ async function renderCreatureCard(creature, options = {}) {
 
   // Artwork Inner Border
   roundRect(ctx, artX, artY, artW, artH, 16);
-  ctx.lineWidth = 3;
+  ctx.lineWidth = isShiny ? 4 : 3;
   ctx.strokeStyle = theme.borderPrimary;
   ctx.stroke();
 
@@ -257,13 +297,13 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.fill();
 
   ctx.fillStyle = theme.accent;
-  ctx.font = `bold 18px ${CARD_FONT}`;
+  ctx.font = `bold 17px ${CARD_FONT}`;
   ctx.fillText(`${creature.rarity.toUpperCase()}  •  ${theme.stars}`, 50, 573);
 
   ctx.textAlign = "right";
-  ctx.fillStyle = "#A0AEC0";
+  ctx.fillStyle = isShiny ? "#F6E05E" : "#A0AEC0";
   ctx.font = `bold 15px ${CARD_FONT}`;
-  ctx.fillText("THE HOLLOW ARCHIVES", width - 50, 573);
+  ctx.fillText(isShiny ? "PRISMATIC EDITION" : "THE HOLLOW ARCHIVES", width - 50, 573);
   ctx.textAlign = "left";
 
   // Lore Description Box
@@ -271,7 +311,7 @@ async function renderCreatureCard(creature, options = {}) {
   ctx.fillStyle = "#1E1B26";
   ctx.fill();
   ctx.lineWidth = 1.5;
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.strokeStyle = isShiny ? "rgba(246, 224, 94, 0.35)" : "rgba(255,255,255,0.08)";
   ctx.stroke();
 
   ctx.fillStyle = "#E2E8F0";
@@ -283,7 +323,7 @@ async function renderCreatureCard(creature, options = {}) {
 
   // Footer Action / Stamp Bar
   roundRect(ctx, 34, 740, width - 68, 64, 14);
-  ctx.fillStyle = mode === "caught" ? theme.badgeBg : theme.headerBg;
+  ctx.fillStyle = mode === "caught" || mode === "hatched" ? theme.badgeBg : theme.headerBg;
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = theme.borderPrimary;
@@ -294,9 +334,11 @@ async function renderCreatureCard(creature, options = {}) {
     ctx.fillStyle = "#FFFFFF";
     ctx.font = `bold 22px ${CARD_FONT}`;
     ctx.fillText("FIRST TO TYPE  catch  IN CHAT CLAIMS IT!", width / 2, 772);
-  } else if (mode === "caught") {
-    const sec = catchTimeMs != null ? `${(catchTimeMs / 1000).toFixed(2)}s` : "";
-    const stampText = `CAUGHT BY ${(catcherName || "OWL").toUpperCase()}  •  ${sec}  •  OWNED: x${ownedCount}`;
+  } else if (mode === "caught" || mode === "hatched") {
+    const actionLabel = mode === "hatched" ? "HATCHED BY" : "CAUGHT BY";
+    const sec = catchTimeMs != null ? `  •  ${(catchTimeMs / 1000).toFixed(2)}s` : "";
+    const shinyTag = shinyCount > 0 ? ` (✨${shinyCount})` : "";
+    const stampText = `${actionLabel} ${(catcherName || "OWL").toUpperCase()}${sec}  •  OWNED: x${ownedCount}${shinyTag}`;
     let fontSize = 20;
     ctx.font = `bold ${fontSize}px ${CARD_FONT}`;
     while (ctx.measureText(stampText).width > width - 96 && fontSize > 13) {
@@ -307,17 +349,18 @@ async function renderCreatureCard(creature, options = {}) {
     ctx.fillText(stampText, width / 2, 772);
   } else {
     const best = fastestMs != null ? `BEST: ${(fastestMs / 1000).toFixed(2)}s` : "UNCAUGHT";
+    const shinyTag = shinyCount > 0 ? ` (✨${shinyCount})` : "";
     ctx.fillStyle = theme.accent;
-    ctx.font = `bold 20px ${CARD_FONT}`;
+    ctx.font = `bold 19px ${CARD_FONT}`;
     ctx.fillText(
-      `OWNED: x${ownedCount}   •   ${best}`,
+      `OWNED: x${ownedCount}${shinyTag}   •   ${best}`,
       width / 2,
       772
     );
   }
   ctx.textAlign = "left";
 
-  const fileName = `${creature.creature_id}-card.png`;
+  const fileName = `${isShiny ? "shiny-" : ""}${creature.creature_id}-card.png`;
   return {
     attachment: new AttachmentBuilder(canvas.toBuffer("image/png"), { name: fileName }),
     fileName
