@@ -214,6 +214,7 @@ db.exec(`
     creature_id TEXT NOT NULL,
     nickname TEXT,
     count INTEGER NOT NULL DEFAULT 1,
+    shiny_count INTEGER NOT NULL DEFAULT 0,
     fastest_catch_ms INTEGER,
     discovered_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, creature_id)
@@ -231,6 +232,7 @@ db.exec(`
     guild_id TEXT NOT NULL,
     channel_id TEXT NOT NULL,
     creature_id TEXT NOT NULL,
+    is_shiny INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
     spawned_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -257,11 +259,43 @@ db.exec(`
     user_id TEXT PRIMARY KEY,
     gifts_count INTEGER NOT NULL DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS user_equipped_companion (
+    user_id TEXT PRIMARY KEY,
+    creature_id TEXT NOT NULL,
+    is_shiny INTEGER NOT NULL DEFAULT 0,
+    equipped_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS user_items (
+    user_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, item_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS user_active_buffs (
+    user_id TEXT NOT NULL,
+    buff_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, buff_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS user_eggs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    egg_tier TEXT NOT NULL,
+    steps_current INTEGER NOT NULL DEFAULT 0,
+    steps_required INTEGER NOT NULL DEFAULT 50,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 ensureColumn("user_creatures", "count", "INTEGER NOT NULL DEFAULT 1");
+ensureColumn("user_creatures", "shiny_count", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("user_creatures", "fastest_catch_ms", "INTEGER");
 ensureColumn("creature_spawns", "catch_time_ms", "INTEGER");
+ensureColumn("creature_spawns", "is_shiny", "INTEGER NOT NULL DEFAULT 0");
 
 const creatures = [
   {
@@ -390,14 +424,12 @@ const upsertCreature = db.prepare(`
 `);
 
 const grantStarterDog = db.prepare(`
-  INSERT OR IGNORE INTO user_creatures (user_id, creature_id, count, fastest_catch_ms)
-  VALUES (?, ?, 1, 1250)
+  INSERT OR IGNORE INTO user_creatures (user_id, creature_id, count, shiny_count, fastest_catch_ms)
+  VALUES (?, ?, 1, 0, 1250)
 `);
 
-// Add your Discord User ID(s) here to automatically place Codee, Kiara, Kion, and Pepper into your inventory on startup:
-const DOG_RECIPIENT_USER_IDS = [
-  // "123456789012345678"
-];
+// Optional: Add Discord User IDs here to automatically grant Codee, Kiara, Kion, and Pepper on startup
+const DOG_RECIPIENT_USER_IDS = [];
 
 db.transaction(() => {
   for (const creature of creatures) {
@@ -428,6 +460,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_jail_release_at ON jail_sentences(release_at);
   CREATE INDEX IF NOT EXISTS idx_user_creatures_user ON user_creatures(user_id);
   CREATE INDEX IF NOT EXISTS idx_creature_spawns_status ON creature_spawns(status, expires_at);
+  CREATE INDEX IF NOT EXISTS idx_user_eggs_user ON user_eggs(user_id);
 `);
 
 console.log("🖤 HOOTIE DATABASE CONNECTED (Cat Bot Creature Edition)");
